@@ -177,9 +177,15 @@ export async function listConversations(uid) {
   must();
   return rows(await admin.from('conversations').select('*').eq('user_id', uid).order('updated_at', { ascending: false }));
 }
-export async function createConversation(uid, { modelId = null, title = 'New chat' } = {}) {
+export async function createConversation(uid, { modelId = null, title = 'New chat', seed = [] } = {}) {
   must();
-  return rows(await admin.from('conversations').insert({ user_id: uid, model_id: modelId, title }).select().single());
+  const conv = rows(await admin.from('conversations').insert({ user_id: uid, model_id: modelId, title }).select().single());
+  if (Array.isArray(seed) && seed.length) {
+    await admin.from('messages').insert(seed
+      .filter((m) => m && m.content)
+      .map((m) => ({ user_id: uid, conversation_id: conv.id, role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content) })));
+  }
+  return conv;
 }
 export async function getConversation(uid, id) {
   must();

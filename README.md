@@ -18,6 +18,8 @@ by **Supabase** (Postgres + Auth + Storage) and deployable on **Coolify** or any
 - 🧠 **Shared + private memory** — every model reads the combined memory and can add to it.
 - 🗂 **Combined + separate files** — one shared tree plus a private tree per model, with real file uploads to Supabase Storage.
 - ⚡ **Streaming chat with saved history** — replies stream in token-by-token, every conversation is saved, and you can reopen or **search** past chats.
+- 📡 **Broadcast & continue** — ask one question to many models at once, compare, then continue one-on-one with whichever answer you liked.
+- ✦ **Skill templates** — one-click ready-made skills (summarize, proofread, code-review, translate, email-draft and more) you can install and tweak.
 - 🔑 **Per-user keys** — each user can paste their own provider API keys in **Settings**; stored AES-256-GCM encrypted, never returned to the browser, and override any server key.
 - 🤖 **Agents that really act** — a ReAct loop where the agent calls real tools (`memory.write/search`, `files.read/write/list`, `web.fetch`, `skill.run`) and the server executes them.
 - 🌙 **Background runs** — agents keep working after you close the window; runs persist to the database and you reopen them from "Recent runs" to watch live progress (with approvals).
@@ -162,10 +164,13 @@ GET  /api/harnesses · POST /api/harnesses/:id/install
 
 ## How agents work
 
-When you run an agent, the server starts a **ReAct loop**: the model is asked to
-reply with one JSON action per turn (`{"action":"files.write","action_input":{…}}`),
-the server **executes the real tool**, feeds the result back as an observation, and
-loops until the model returns a `final` answer (max 8 steps). The run executes
+When you run an agent, the server runs a tool loop. On providers that support it
+(OpenRouter, OpenAI, xAI, GLM, Kimi, custom — i.e. most setups) it uses the model's
+**native function-calling** API, so the model emits real structured tool calls —
+far more reliable at actually *doing* work than asking it to format JSON. On
+providers without tool support (direct Anthropic, Gemini, Ollama) it falls back to a
+prompt-based JSON action loop. Either way the server **executes the real tool**,
+feeds the result back, and loops until the agent is done (max 8 steps). The run executes
 **in the background** and persists each step to the database, so closing the window
 doesn't stop it — reopen it from **Recent runs** to watch live progress. Built-in tools:
 
@@ -206,11 +211,12 @@ Done, and what's next. Contributions welcome.
 - ✅ Per-user encrypted provider keys
 - ✅ Streaming responses + saved, searchable chat history
 - ✅ Shared + private memory; combined + per-model file trees
+- ✅ Background agent runs + multi-AI delegation (ask_model / ask_agent)
+- ✅ Native function-calling on supported providers (reliable tool use)
 - ✅ Agents with a real tool loop and human-in-the-loop approvals
-- ✅ User-authored skills
+- ✅ User-authored skills + one-click skill templates
 
 **Planned**
-- ⬜ Native function-calling for providers that support it (instead of the JSON loop)
 - ⬜ Nested tool use *inside* skills
 - ⬜ Wire NotebookLM / LangChain harnesses to live SDKs
 - ⬜ Per-agent "autonomous mode" (trusted agents skip approval)

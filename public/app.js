@@ -381,9 +381,29 @@ async function renderChat(c) {
         out.appendChild(cards[id]); });
       try {
         const results = await api('/chat/broadcast', { method: 'POST', body: JSON.stringify({ modelIds: ids, message: text }) });
-        results.forEach((r) => { $('.muted', cards[r.modelId]).innerHTML = r.error ? `<span style="color:var(--danger)">${esc(r.error)}</span>` : esc(r.text); });
+        results.forEach((r) => {
+          const card = cards[r.modelId];
+          $('.muted', card).innerHTML = r.error ? `<span style="color:var(--danger)">${esc(r.error)}</span>` : esc(r.text);
+          if (!r.error) {
+            const cont = el(`<button class="btn small ghost" style="margin-top:10px">↳ Continue with ${esc(r.label)}</button>`);
+            cont.onclick = () => continueFromBroadcast(r.modelId, text, r.text);
+            card.appendChild(cont);
+          }
+        });
       } catch (e) { out.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
     };
+  }
+
+  // Turn one model's broadcast answer into an ongoing single chat.
+  async function continueFromBroadcast(modelId, prompt, answer) {
+    const cv = await api('/conversations', { method: 'POST', body: JSON.stringify({
+      modelId, title: prompt.slice(0, 60),
+      seed: [{ role: 'user', content: prompt }, { role: 'assistant', content: answer }],
+    }) });
+    state.chatModel = modelId;
+    state.currentConvo = cv.id;
+    mode = 'single';
+    draw();
   }
   draw();
 }
@@ -686,13 +706,26 @@ async function agentForm(models, a = {}) {
 // ===================================================================
 //  SKILLS
 // ===================================================================
+const SKILL_TEMPLATES = [
+  { name: 'summarize', description: 'Condense text into tight bullets.', instructions: 'Summarize the input into 3-5 concise bullet points. Keep only what matters; no preamble.' },
+  { name: 'proofread', description: 'Fix grammar & tighten prose.', instructions: 'Correct grammar, spelling and punctuation, and tighten wordy phrasing. Return only the corrected text.' },
+  { name: 'code-review', description: 'Review code for bugs & style.', instructions: 'Review the provided code. List concrete issues (bugs, security, style) as a short bulleted list, then suggest the single most important fix.' },
+  { name: 'translate-en', description: 'Translate anything to English.', instructions: 'Translate the input into natural, fluent English. Return only the translation.' },
+  { name: 'extract-actions', description: 'Pull action items from notes.', instructions: 'Read the input and list every action item as "- [ ] owner: task". If no owner is stated, use "?".' },
+  { name: 'email-draft', description: 'Draft a clear, polite email.', instructions: 'Write a clear, friendly, professional email accomplishing the requested goal. Include a subject line. Keep it concise.' },
+  { name: 'explain-simply', description: 'Explain like I am five.', instructions: 'Explain the input topic in plain language a beginner can follow, using a short analogy. Avoid jargon.' },
+  { name: 'blog-post', description: 'Write a structured blog post.', instructions: 'Write an engaging blog post on the topic: a hook, 3-4 sections with headings, and a short conclusion.' },
+];
+
 async function renderSkills(c) {
   const [skills, models] = await Promise.all([api('/skills'), api('/models')]);
+  $('#topbar-actions').appendChild(el(`<button class="btn" id="browse-skills">✦ Browse templates</button>`));
   $('#topbar-actions').appendChild(el(`<button class="btn primary" id="add-skill">+ New skill</button>`));
   $('#add-skill').onclick = () => skillForm();
+  $('#browse-skills').onclick = () => templatesModal(skills);
   c.innerHTML = '';
-  c.appendChild(el(`<p class="muted small" style="margin:0 0 14px">A skill is a reusable instruction. Agents can run any skill via the <code>skill.run</code> tool, or test one here.</p>`));
-  if (!skills.length) { c.appendChild(el('<div class="empty">No skills yet. Create one your agents can call.</div>')); return; }
+  c.appendChild(el(`<p class="muted small" style="margin:0 0 14px">A skill is a reusable instruction. Agents can run any skill via the <code>skill.run</code> tool, or test one here. New? Try <b>Browse templates</b>.</p>`));
+  if (!skills.length) { c.appendChild(el('<div class="empty">No skills yet. Hit <b>Browse templates</b> for ready-made ones, or create your own.</div>')); return; }
   const grid = el('<div class="grid cols-2"></div>');
   skills.forEach((s) => grid.appendChild(el(`<div class="card">
     <div class="row"><h3>✦ ${esc(s.name)}</h3></div>
@@ -719,6 +752,29 @@ function skillForm(s = {}) {
   $('#save', body).onclick = async () => {
     await api('/skills', { method: 'POST', body: JSON.stringify({ id: s.id, name: $('#s-name', body).value, description: $('#s-desc', body).value, instructions: $('#s-inst', body).value }) });
     closeModal(); render();
+  };
+}
+
+function templatesModal(existing = []) {
+  const have = new Set(existing.map((s) => s.name?.toLowerCase()));
+  const body = el(`<div><p class="muted small" style="margin-top:0">One-click ready-made skills. Install, then tweak any of them under New/Edit.</p><div class="list" id="tpl-list"></div>
+    <div class="modal-foot"><button class="btn" id="cancel">Close</button></div></div>`);
+  openModal('Skill templates', body);
+  const list = $('#tpl-list', body);
+  SKILL_TEMPLATES.forEach((t) => {
+    const installed = have.has(t.name);
+    const item = el(`<div class="list-item">
+      <div class="meta"><b>✦ ${esc(t.name)}</b><span class="muted small">${esc(t.description)}</span></div>
+      <button class="btn small ${installed ? 'ghost' : 'primary'}" data-tpl="${esc(t.name)}" ${installed ? 'disabled' : ''}>${installed ? 'installed' : 'Install'}</button></div>`);
+    list.appendChild(item);
+  });
+  $('#cancel', body).onclick = closeModal;
+  list.onclick = async (e) => {
+    const name = e.target.dataset.tpl; if (!name) return;
+    const t = SKILL_TEMPLATES.find((x) => x.name === name);
+    e.target.disabled = true; e.target.textContent = 'installing…';
+    try { await api('/skills', { method: 'POST', body: JSON.stringify(t) }); e.target.textContent = 'installed'; e.target.classList.replace('primary', 'ghost'); }
+    catch { e.target.disabled = false; e.target.textContent = 'Install'; }
   };
 }
 

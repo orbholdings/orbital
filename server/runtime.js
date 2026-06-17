@@ -4,8 +4,8 @@
 //
 // Works with any chat model (no native function-calling required), including
 // Ollama. In demo mode (no API key) it returns the demo text as the answer.
-import { chat } from './providers.js';
-import { toolCatalog, executeTool, toolNeedsApproval } from './tools.js';
+import { chat, chatWithTools, supportsTools } from './providers.js';
+import { toolCatalog, executeTool, toolNeedsApproval, openaiToolDefs, realToolName } from './tools.js';
 import * as db from './db.js';
 
 const MAX_STEPS = 8;
@@ -41,12 +41,16 @@ function systemPrompt(agent, model, catalog, memory) {
   return [
     `You are "${agent.name}", a ${agent.kind} agent. ${agent.instructions}`,
     memory,
-    `You can use tools. Available tools:\n${catalog}`,
-    `On EACH turn reply with ONE JSON object and nothing else, in this exact shape:`,
+    `You complete tasks by USING TOOLS — not by describing what you would do. Available tools:\n${catalog}`,
+    `How to work:`,
+    `- TAKE ACTION. If the task needs files, actually create them with files.write (one file per call). If it needs notes, use memory.write. Never stop at just a plan.`,
+    `- Go step by step: one tool call per turn, read the result, then continue.`,
+    `- Keep going until the work is genuinely finished — don't ask the user questions, make reasonable assumptions and proceed.`,
+    `On EACH turn reply with ONE JSON object and NOTHING else, in this exact shape:`,
     `{"thought":"brief reasoning","action":"<tool name>","action_input":{ ...args }}`,
-    `When you are done, use the special action "final":`,
-    `{"thought":"why you're done","action":"final","action_input":{"answer":"your full answer to the user"}}`,
-    `Only call tools from the list. Keep thoughts short. Do not wrap the JSON in extra prose.`,
+    `Only when the work is actually done, finish with:`,
+    `{"thought":"why you're done","action":"final","action_input":{"answer":"a summary of what you DID (files created, etc.)"}}`,
+    `Reply with raw JSON only — no prose, no markdown code fences. Only use tools from the list above.`,
   ].filter(Boolean).join('\n\n');
 }
 
@@ -95,6 +99,49 @@ export async function runAgent({ uid, agent, model, keys, task, skills = [], mod
       return r.text;
     },
   };
+
+  // Tool names available to this agent (mirrors the catalog).
+  const toolNames = [
+    ...(agent.tools?.length ? agent.tools : ['memory.write', 'memory.search', 'files.list', 'files.read', 'files.write', 'web.fetch']),
+    ...(skills.length ? ['skill.run'] : []),
+    ...(models.length ? ['ask_model'] : []),
+    ...(agents.length ? ['ask_agent'] : []),
+  ];
+
+  // Preferred path: native function-calling (reliable). Falls back to the JSON
+  // loop below for providers without tool support (Gemini, Ollama, direct Claude).
+  if (supportsTools(model.provider)) {
+    const helper = async (tool, input) => {
+      onEvent({ type: 'action', tool, input });
+      if (toolNeedsApproval(tool)) {
+        const ok = await requestApproval(tool, input);
+        if (!ok) { const o = '⛔ The user denied this action.'; onEvent({ type: 'observation', text: o }); return o; }
+      }
+      const o = await executeTool(tool, input, ctx);
+      onEvent({ type: 'observation', text: o });
+      return o;
+    };
+    const toolDefs = openaiToolDefs(toolNames);
+    const msgs = [
+      { role: 'system', content: `You are "${agent.name}", a ${agent.kind} agent. ${agent.instructions}\n\n${memory}\n\nComplete the task by USING TOOLS — actually create files, write memory, etc. Don't just describe a plan. Make reasonable assumptions instead of asking questions. When everything is truly done, reply normally (no tool call) with a short summary of what you did.` },
+      { role: 'user', content: String(task || 'Introduce yourself and your capabilities.') },
+    ];
+    for (let step = 0; step < MAX_STEPS; step++) {
+      const out = await chatWithTools({ provider: model.provider, model: model.model, settings: model.settings, keys, messages: msgs, tools: toolDefs });
+      if (out.demo) { onEvent({ type: 'final', text: out.text, demo: true }); return { text: out.text, demo: true, steps: step }; }
+      if (!out.toolCalls?.length) { onEvent({ type: 'final', text: out.text }); return { text: out.text, steps: step }; }
+      msgs.push(out.assistantMsg);
+      for (const call of out.toolCalls) {
+        const real = realToolName(call.name);
+        if (call.thought) onEvent({ type: 'thought', text: call.thought });
+        const obs = await helper(real, call.args || {});
+        msgs.push({ role: 'tool', tool_call_id: call.id, content: String(obs) });
+      }
+    }
+    const text = `Stopped after ${MAX_STEPS} steps.`;
+    onEvent({ type: 'final', text });
+    return { text, steps: MAX_STEPS, truncated: true };
+  }
 
   for (let step = 0; step < MAX_STEPS; step++) {
     const out = await chat({ provider: model.provider, model: model.model, settings: model.settings, keys, messages });

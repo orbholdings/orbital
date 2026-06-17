@@ -190,6 +190,31 @@ export async function chatStream({ provider, model, messages, settings, keys }, 
   return demoStream(provider || 'unknown', model, messages, 'unknown provider', onToken);
 }
 
+// ---------- native function-calling -------------------------------------
+// Only OpenAI-compatible providers here. Returns { toolCalls[], text, assistantMsg, demo }.
+export const supportsTools = (provider) => OPENAI_COMPAT_PROVIDERS.includes(provider);
+
+export async function chatWithTools({ provider, model, messages, tools, settings, keys }) {
+  const { url, key, label } = compatTarget(provider, settings, keys);
+  const headers = compatTarget(provider, settings, keys).headers;
+  if (provider === 'custom' && !url) return { demo: true, text: demo('custom', model, messages, 'no Base URL set').text };
+  if (!key) return { demo: true, text: demo(label, model, messages, 'no API key set').text };
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, ...headers },
+    body: JSON.stringify({ model, messages, tools, tool_choice: 'auto', temperature: settings?.temperature ?? 0.7, max_tokens: settings?.maxTokens ?? 1024 }),
+  });
+  if (!res.ok) throw new Error(`${label} ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  const msg = data.choices?.[0]?.message || {};
+  const toolCalls = (msg.tool_calls || []).map((tc) => {
+    let args = {};
+    try { args = JSON.parse(tc.function?.arguments || '{}'); } catch {}
+    return { id: tc.id, name: tc.function?.name, args };
+  });
+  return { toolCalls, text: msg.content || '', assistantMsg: msg };
+}
+
 // Which providers have a SERVER env key? (per-user keys are merged in the route)
 export function providerStatus() {
   return {

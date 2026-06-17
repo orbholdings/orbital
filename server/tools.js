@@ -131,3 +131,31 @@ export async function executeTool(name, args, ctx) {
   try { return await tool.run(ctx, args || {}); }
   catch (e) { return `Error running ${name}: ${e.message || e}`; }
 }
+
+// ---------- Native function-calling support -----------------------------
+// JSON-Schema parameters for each tool, used with providers' `tools` API.
+const str = { type: 'string' };
+const TOOL_PARAMS = {
+  'memory.write':  { type: 'object', properties: { text: str, scope: str }, required: ['text'] },
+  'memory.search': { type: 'object', properties: { query: str }, required: ['query'] },
+  'files.list':    { type: 'object', properties: { scope: str } },
+  'files.read':    { type: 'object', properties: { path: str, scope: str }, required: ['path'] },
+  'files.write':   { type: 'object', properties: { path: str, content: str, scope: str }, required: ['path', 'content'] },
+  'web.fetch':     { type: 'object', properties: { url: str }, required: ['url'] },
+  'skill.run':     { type: 'object', properties: { name: str, input: str }, required: ['name'] },
+  'ask_model':     { type: 'object', properties: { model: str, input: str }, required: ['model', 'input'] },
+  'ask_agent':     { type: 'object', properties: { agent: str, input: str }, required: ['agent', 'input'] },
+};
+
+// Provider function names can't contain dots — sanitize and map back.
+const apiName = (n) => n.replace(/\./g, '__');
+export function realToolName(name) {
+  return BUILTIN_TOOL_NAMES.find((n) => apiName(n) === name) || name;
+}
+// OpenAI-style tool definitions for the given tool names.
+export function openaiToolDefs(names) {
+  return (names || []).filter((n) => TOOLS[n]).map((n) => ({
+    type: 'function',
+    function: { name: apiName(n), description: TOOLS[n].description, parameters: TOOL_PARAMS[n] || { type: 'object', properties: {} } },
+  }));
+}
