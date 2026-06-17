@@ -22,7 +22,7 @@ by **Supabase** (Postgres + Auth + Storage) and deployable on **Coolify** or any
 - 🤖 **Agents that really act** — a ReAct loop where the agent calls real tools (`memory.write/search`, `files.read/write/list`, `web.fetch`, `skill.run`), the server executes them, and the trace streams live step-by-step.
 - ✦ **Skills** — author reusable named instructions; agents invoke them with `skill.run`, or test-run them yourself.
 - 🔌 **Harnesses** — OpenRouter, Ollama, NotebookLM, LangChain — install with one click.
-- 🛰 **Providers** — OpenRouter (one key, most models), Ollama (local), or direct Claude/OpenAI/Gemini/GLM/Kimi keys.
+- 🛰 **Providers** — OpenRouter (one key, most models), Ollama (local), direct Claude/OpenAI/Gemini/GLM/Kimi/**xAI (Grok)**, or a **Custom** OpenAI-compatible endpoint (DeepSeek, Groq, Mistral, your own server…) — just add a base URL + key.
 
 > Without provider keys, models reply in clearly-labelled **demo mode**, so you can log in
 > and click around immediately. Add an OpenRouter key for real responses.

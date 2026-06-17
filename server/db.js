@@ -3,7 +3,8 @@
 import { admin, BUCKET } from './supabase.js';
 import { encrypt, decrypt } from './util.js';
 
-const PROVIDERS = ['openrouter', 'openai', 'claude', 'gemini', 'glm', 'kimi'];
+const PROVIDERS = ['openrouter', 'openai', 'claude', 'gemini', 'glm', 'kimi', 'xai'];
+const KEY_NAME_RE = /^[a-z0-9_-]{1,32}$/; // safe names for custom provider keys
 
 const must = () => {
   if (!admin) throw new Error('Supabase is not configured. Set SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY.');
@@ -287,9 +288,19 @@ export async function keyStatus(uid) {
   return Object.fromEntries(PROVIDERS.map((p) => [p, set.has(p)]));
 }
 
+// Custom key names the user has set (anything outside the known providers) —
+// these power "custom" OpenAI-compatible models. Names only, never values.
+export async function listCustomKeys(uid) {
+  must();
+  const data = rows(await admin.from('provider_keys').select('provider').eq('user_id', uid));
+  return data.map((r) => r.provider).filter((p) => !PROVIDERS.includes(p)).sort();
+}
+
 export async function setUserKey(uid, provider, key) {
   must();
-  if (!PROVIDERS.includes(provider)) throw new Error('unknown provider');
+  provider = String(provider || '').trim().toLowerCase();
+  // Known providers, or any safe custom name for a custom OpenAI-compatible endpoint.
+  if (!PROVIDERS.includes(provider) && !KEY_NAME_RE.test(provider)) throw new Error('invalid provider name');
   if (!key || !key.trim()) throw new Error('key required');
   rows(await admin.from('provider_keys').upsert({
     user_id: uid, provider, enc_key: encrypt(key.trim()), updated_at: new Date().toISOString(),
@@ -307,7 +318,7 @@ export async function deleteUserKey(uid, provider) {
 const DEFAULT_MODELS = [
   { label: 'Claude', provider: 'openrouter', model: 'anthropic/claude-sonnet-4', settings: { systemPrompt: 'You are Claude, thoughtful and precise.' } },
   { label: 'ChatGPT', provider: 'openrouter', model: 'openai/gpt-4o' },
-  { label: 'Gemini', provider: 'openrouter', model: 'google/gemini-2.0-flash-001' },
+  { label: 'Gemini', provider: 'openrouter', model: 'google/gemini-2.5-flash' },
   { label: 'GLM 5.2', provider: 'openrouter', model: 'z-ai/glm-5.2' },
   { label: 'Kimi', provider: 'openrouter', model: 'moonshotai/kimi-k2' },
   { label: 'Llama (local)', provider: 'ollama', model: 'llama3.1', settings: { temperature: 0.8 } },

@@ -55,6 +55,7 @@ app.get('/api/status', wrap(async (req, res) => {
 
 // ---------- provider keys (per user) -------------------------------------
 app.get('/api/keys', wrap(async (req, res) => res.json(await db.keyStatus(req.uid))));
+app.get('/api/keys/custom', wrap(async (req, res) => res.json(await db.listCustomKeys(req.uid))));
 app.post('/api/keys', wrap(async (req, res) => res.json(await db.setUserKey(req.uid, req.body?.provider, req.body?.key))));
 app.delete('/api/keys/:provider', wrap(async (req, res) => res.json(await db.deleteUserKey(req.uid, req.params.provider))));
 

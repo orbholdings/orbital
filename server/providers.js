@@ -13,6 +13,7 @@ const ENV_KEY = {
   claude: 'ANTHROPIC_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY',
   gemini: 'GEMINI_API_KEY',
+  xai: 'XAI_API_KEY',
 };
 
 // Per-user key first, then server env.
@@ -26,7 +27,23 @@ const OPENAI_COMPAT = {
   openai: { url: 'https://api.openai.com/v1/chat/completions' },
   glm: { url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions' },
   kimi: { url: 'https://api.moonshot.cn/v1/chat/completions' },
+  xai: { url: 'https://api.x.ai/v1/chat/completions' },
 };
+
+const OPENAI_COMPAT_PROVIDERS = ['openrouter', 'openai', 'glm', 'kimi', 'xai', 'custom'];
+
+// Resolve the endpoint + key for any OpenAI-compatible provider, including a
+// user-defined "custom" one (base URL + a named key, both from the model/settings).
+function compatTarget(provider, settings, keys) {
+  if (provider === 'custom') {
+    let base = (settings?.baseUrl || '').trim().replace(/\/$/, '');
+    if (base && !/\/chat\/completions$/.test(base)) base += '/chat/completions';
+    const keyName = settings?.keyName || 'custom';
+    return { url: base, key: (keys && keys[keyName]) || '', headers: {}, label: keyName || 'custom' };
+  }
+  const cfg = OPENAI_COMPAT[provider];
+  return { url: cfg?.url, key: resolveKey(provider, keys), headers: cfg?.headers || {}, label: provider };
+}
 
 const body = (model, messages, settings, stream) => JSON.stringify({
   model, messages, stream,
@@ -36,11 +53,11 @@ const body = (model, messages, settings, stream) => JSON.stringify({
 
 // ---------- non-streaming ------------------------------------------------
 async function callOpenAICompat(kind, { model, messages, settings, keys }) {
-  const key = resolveKey(kind, keys);
-  if (!key) return demo(kind, model, messages, 'no API key set');
-  const cfg = OPENAI_COMPAT[kind];
-  const res = await fetch(cfg.url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, ...(cfg.headers || {}) }, body: body(model, messages, settings, false) });
-  if (!res.ok) throw new Error(`${kind} ${res.status}: ${await res.text()}`);
+  const { url, key, headers, label } = compatTarget(kind, settings, keys);
+  if (kind === 'custom' && !url) return demo('custom', model, messages, 'no Base URL set');
+  if (!key) return demo(label, model, messages, 'no API key set');
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, ...headers }, body: body(model, messages, settings, false) });
+  if (!res.ok) throw new Error(`${label} ${res.status}: ${await res.text()}`);
   const data = await res.json();
   return { provider: kind, text: data.choices?.[0]?.message?.content ?? '', raw: data };
 }
@@ -89,7 +106,7 @@ function demo(provider, model, messages, reason) {
 
 export async function chat({ provider, model, messages, settings, keys }) {
   switch (provider) {
-    case 'openrouter': case 'openai': case 'glm': case 'kimi':
+    case 'openrouter': case 'openai': case 'glm': case 'kimi': case 'xai': case 'custom':
       return callOpenAICompat(provider, { model, messages, settings, keys });
     case 'ollama': return callOllama({ model, messages, settings });
     case 'claude': case 'anthropic': return callAnthropic({ model, messages, settings, keys });
@@ -133,12 +150,12 @@ async function demoStream(provider, model, messages, reason, onToken) {
 }
 
 export async function chatStream({ provider, model, messages, settings, keys }, onToken) {
-  // OpenAI-compatible
-  if (['openrouter', 'openai', 'glm', 'kimi'].includes(provider)) {
-    const key = resolveKey(provider, keys);
-    if (!key) return demoStream(provider, model, messages, 'no API key set', onToken);
-    const cfg = OPENAI_COMPAT[provider];
-    const res = await fetch(cfg.url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, ...(cfg.headers || {}) }, body: body(model, messages, settings, true) });
+  // OpenAI-compatible (incl. xAI and user-defined custom endpoints)
+  if (OPENAI_COMPAT_PROVIDERS.includes(provider)) {
+    const { url, key, headers, label } = compatTarget(provider, settings, keys);
+    if (provider === 'custom' && !url) return demoStream('custom', model, messages, 'no Base URL set', onToken);
+    if (!key) return demoStream(label, model, messages, 'no API key set', onToken);
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, ...headers }, body: body(model, messages, settings, true) });
     const text = await streamLines(res, exOpenAI, onToken);
     return { provider, text };
   }
@@ -183,5 +200,6 @@ export function providerStatus() {
     gemini: !!process.env.GEMINI_API_KEY,
     glm: !!process.env.ZHIPU_API_KEY,
     kimi: !!process.env.MOONSHOT_API_KEY,
+    xai: !!process.env.XAI_API_KEY,
   };
 }

@@ -68,7 +68,7 @@ async function streamSSE(path, body, onEvent) {
   }
 }
 
-const PROVIDER_ICONS = { claude: '🟣', openai: '🟢', gpt: '🟢', gemini: '🔷', glm: '🟠', kimi: '🌙', ollama: '🦙', openrouter: '🛰' };
+const PROVIDER_ICONS = { claude: '🟣', openai: '🟢', gpt: '🟢', gemini: '🔷', glm: '🟠', kimi: '🌙', ollama: '🦙', openrouter: '🛰', xai: '⚡', custom: '🔧' };
 const icon = (p) => PROVIDER_ICONS[p] || '◍';
 
 const state = { view: 'overview', chatModel: null };
@@ -416,10 +416,15 @@ async function renderModels(c) {
 
 function modelForm(m = {}) {
   const s = m.settings || {};
-  const providers = ['openrouter', 'ollama', 'claude', 'openai', 'gemini', 'glm', 'kimi'];
+  const providers = ['openrouter', 'ollama', 'claude', 'openai', 'gemini', 'glm', 'kimi', 'xai', 'custom'];
   const body = el(`<div>
     <label class="field">Display name<input id="f-label" value="${esc(m.label || '')}" placeholder="e.g. Claude"></label>
     <label class="field">Provider<select id="f-provider">${providers.map((p) => `<option ${p === m.provider ? 'selected' : ''}>${p}</option>`).join('')}</select></label>
+    <div id="f-custom" hidden>
+      <label class="field">Base URL (OpenAI-compatible)<input id="f-baseurl" value="${esc(s.baseUrl || '')}" placeholder="e.g. https://api.x.ai/v1"></label>
+      <label class="field">Key name<input id="f-keyname" value="${esc(s.keyName || '')}" placeholder="matches a key you add in Settings, e.g. xai"></label>
+      <p class="muted small" style="margin:-6px 0 12px">Add the matching key in <b>Settings → Custom providers</b>. Works with any OpenAI-style API (xAI, DeepSeek, Groq, Mistral, local…).</p>
+    </div>
     <label class="field">Model id<input id="f-model" value="${esc(m.model || '')}" placeholder="e.g. anthropic/claude-sonnet-4"></label>
     <label class="field">System prompt<textarea id="f-sys" placeholder="Optional persona / instructions">${esc(s.systemPrompt || '')}</textarea></label>
     <label class="field">Temperature <span id="t-val">${s.temperature ?? 0.7}</span><div class="range-row"><input type="range" id="f-temp" min="0" max="2" step="0.1" value="${s.temperature ?? 0.7}"></div></label>
@@ -427,11 +432,15 @@ function modelForm(m = {}) {
     <label class="field" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="f-mem" style="width:auto" ${s.useSharedMemory !== false ? 'checked' : ''}> Use shared memory</label>
     <div class="modal-foot"><button class="btn" id="cancel">Cancel</button><button class="btn primary" id="save">Save</button></div></div>`);
   openModal(m.id ? 'Model settings' : 'Add model', body);
+  const toggleCustom = () => { $('#f-custom', body).hidden = $('#f-provider', body).value !== 'custom'; };
+  $('#f-provider', body).onchange = toggleCustom; toggleCustom();
   $('#f-temp', body).oninput = (e) => ($('#t-val', body).textContent = e.target.value);
   $('#cancel', body).onclick = closeModal;
   $('#save', body).onclick = async () => {
-    await api('/models', { method: 'POST', body: JSON.stringify({ id: m.id, label: $('#f-label', body).value, provider: $('#f-provider', body).value, model: $('#f-model', body).value,
-      settings: { systemPrompt: $('#f-sys', body).value, temperature: +$('#f-temp', body).value, maxTokens: +$('#f-max', body).value, useSharedMemory: $('#f-mem', body).checked } }) });
+    const provider = $('#f-provider', body).value;
+    const settings = { systemPrompt: $('#f-sys', body).value, temperature: +$('#f-temp', body).value, maxTokens: +$('#f-max', body).value, useSharedMemory: $('#f-mem', body).checked };
+    if (provider === 'custom') { settings.baseUrl = $('#f-baseurl', body).value.trim(); settings.keyName = $('#f-keyname', body).value.trim().toLowerCase(); }
+    await api('/models', { method: 'POST', body: JSON.stringify({ id: m.id, label: $('#f-label', body).value, provider, model: $('#f-model', body).value, settings }) });
     closeModal(); render();
   };
 }
@@ -714,6 +723,7 @@ const KEY_PROVIDERS = [
   { id: 'gemini', label: 'Google Gemini', hint: 'Google AI Studio API key.', placeholder: 'AIza...' },
   { id: 'glm', label: 'GLM (Zhipu)', hint: 'Zhipu BigModel key.', placeholder: '...' },
   { id: 'kimi', label: 'Kimi (Moonshot)', hint: 'Moonshot API key.', placeholder: 'sk-...' },
+  { id: 'xai', label: 'xAI (Grok)', hint: 'Direct xAI key for Grok models.', placeholder: 'xai-...' },
 ];
 
 async function renderSettings(c) {
@@ -745,6 +755,31 @@ async function renderSettings(c) {
       catch (err) { msg.style.color = 'var(--danger)'; msg.textContent = err.message; }
     }
     if (clear) { await api(`/keys/${clear}`, { method: 'DELETE' }); bootDots(); render(); }
+  };
+
+  // --- Custom / other providers (any OpenAI-compatible API) ---
+  const custom = await api('/keys/custom').catch(() => []);
+  const ccard = el(`<div class="card" style="margin-top:16px">
+    <h3>🔧 Custom providers</h3>
+    <p class="muted small" style="margin:6px 0 12px">Use any OpenAI-compatible API (DeepSeek, Groq, Mistral, a local server…). Add a key here under a short <b>name</b>, then create a model with provider <b>custom</b>, that same <b>key name</b>, and the provider's <b>Base URL</b>.</p>
+    <div class="tag-row" id="custom-keys" style="margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px">
+      <input id="ck-name" placeholder="key name (e.g. deepseek)" style="max-width:200px">
+      <input id="ck-val" type="password" placeholder="API key" style="flex:1">
+      <button class="btn primary small" id="ck-save">Add</button>
+    </div>
+    <p class="small" id="ck-msg" style="margin:8px 0 0;min-height:14px"></p></div>`);
+  c.appendChild(ccard);
+  const ckList = $('#custom-keys', ccard);
+  if (!custom.length) ckList.appendChild(el('<span class="muted small">No custom keys yet.</span>'));
+  else custom.forEach((name) => ckList.appendChild(el(`<span class="pill on">${esc(name)} <a href="#" data-ckdel="${esc(name)}" style="color:var(--danger);text-decoration:none;margin-left:4px">✕</a></span>`)));
+  ckList.onclick = async (e) => { e.preventDefault(); const n = e.target.dataset.ckdel; if (n) { await api(`/keys/${encodeURIComponent(n)}`, { method: 'DELETE' }); render(); } };
+  $('#ck-save', ccard).onclick = async () => {
+    const name = $('#ck-name', ccard).value.trim().toLowerCase(), val = $('#ck-val', ccard).value.trim(), msg = $('#ck-msg', ccard);
+    if (!/^[a-z0-9_-]{1,32}$/.test(name)) { msg.style.color = 'var(--danger)'; msg.textContent = 'Name: letters/numbers/-/_ only.'; return; }
+    if (!val) { msg.style.color = 'var(--danger)'; msg.textContent = 'Paste a key.'; return; }
+    try { await api('/keys', { method: 'POST', body: JSON.stringify({ provider: name, key: val }) }); render(); }
+    catch (err) { msg.style.color = 'var(--danger)'; msg.textContent = err.message; }
   };
 
   // --- Approvals: tools you've chosen to auto-approve ---
