@@ -91,6 +91,22 @@ export const TOOLS = {
       return clip(await ctx.runSkill(a.name, a.input || ''), 6000);
     },
   },
+  'ask_model': {
+    description: 'Ask another AI model one question and get its answer.',
+    args: '{ "model": "model name", "input": "your question" }',
+    run: async (ctx, a) => {
+      if (!ctx.askModel) return 'Error: model delegation unavailable.';
+      return clip(await ctx.askModel(a.model, a.input ?? a.prompt ?? ''), 6000);
+    },
+  },
+  'ask_agent': {
+    description: 'Delegate a task to another agent and get its result.',
+    args: '{ "agent": "agent name", "input": "the task" }',
+    run: async (ctx, a) => {
+      if (!ctx.askAgent) return 'Error: agent delegation unavailable.';
+      return clip(await ctx.askAgent(a.agent, a.input ?? a.task ?? ''), 6000);
+    },
+  },
 };
 
 export const BUILTIN_TOOL_NAMES = Object.keys(TOOLS);

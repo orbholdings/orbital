@@ -93,6 +93,30 @@ create table if not exists public.skills (
   created_at   timestamptz not null default now()
 );
 
+-- Background agent runs and their step-by-step trace. Runs execute server-side
+-- and survive the user closing the run window.
+create table if not exists public.agent_runs (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references auth.users(id) on delete cascade,
+  agent_id    uuid,
+  agent_name  text not null default 'Agent',
+  task        text not null default '',
+  status      text not null default 'running',  -- running | awaiting_approval | done | error
+  result      text not null default '',
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create table if not exists public.agent_run_events (
+  id          uuid primary key default gen_random_uuid(),
+  run_id      uuid not null references public.agent_runs(id) on delete cascade,
+  user_id     uuid not null references auth.users(id) on delete cascade,
+  seq         int not null default 0,
+  type        text not null,                     -- thought|action|observation|final|error|approval_request|approval_resolved|start
+  data        jsonb not null default '{}'::jsonb,
+  created_at  timestamptz not null default now()
+);
+
 -- Tools a user has chosen to auto-approve ("approve every time"). If a tool is
 -- listed here, the agent runs it without pausing to ask.
 create table if not exists public.auto_approvals (
@@ -121,6 +145,8 @@ create index if not exists harnesses_user_idx  on public.harnesses(user_id);
 create index if not exists conversations_user_idx on public.conversations(user_id, updated_at desc);
 create index if not exists messages_conv_idx      on public.messages(conversation_id, created_at);
 create index if not exists messages_user_idx      on public.messages(user_id);
+create index if not exists agent_runs_user_idx     on public.agent_runs(user_id, created_at desc);
+create index if not exists agent_run_events_idx    on public.agent_run_events(run_id, seq);
 
 -- ---- Row Level Security ------------------------------------
 -- The backend uses the service-role key (which bypasses RLS) and filters by
@@ -136,11 +162,13 @@ alter table public.skills        enable row level security;
 alter table public.auto_approvals enable row level security;
 alter table public.conversations enable row level security;
 alter table public.messages      enable row level security;
+alter table public.agent_runs       enable row level security;
+alter table public.agent_run_events enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['models','agents','memory','files','harnesses','provider_keys','skills','auto_approvals','conversations','messages'] loop
+  foreach t in array array['models','agents','memory','files','harnesses','provider_keys','skills','auto_approvals','conversations','messages','agent_runs','agent_run_events'] loop
     execute format('drop policy if exists "own rows" on public.%I;', t);
     execute format(
       'create policy "own rows" on public.%I for all

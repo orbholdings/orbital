@@ -153,44 +153,59 @@ app.get('/api/agents', wrap(async (req, res) => res.json(await db.listAgents(req
 app.post('/api/agents', wrap(async (req, res) => res.json(await db.upsertAgent(req.uid, req.body || {}))));
 app.delete('/api/agents/:id', wrap(async (req, res) => { await db.deleteAgent(req.uid, req.params.id); res.json({ ok: true }); }));
 
-// Run an agent with the real tool/skill loop, streaming each step over SSE.
-app.post('/api/agents/:id/run', async (req, res) => {
-  try {
-    const agent = await db.getAgent(req.uid, req.params.id);
-    if (!agent) return res.status(404).json({ error: 'agent not found' });
-    const model = agent.model_id ? await db.getModel(req.uid, agent.model_id) : null;
-    if (!model) return res.status(400).json({ error: 'agent has no valid model' });
-    const [keys, skills, autoList] = await Promise.all([
-      db.getUserKeys(req.uid), db.listSkills(req.uid), db.listAutoApprovals(req.uid),
-    ]);
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders?.();
-    const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
-    const runId = uid('run');
-    const autoApproved = new Set(autoList);
-    send({ type: 'start', runId, agent: agent.name, model: model.label });
+// Start an agent run in the BACKGROUND. Returns a runId immediately; the loop
+// keeps executing server-side (surviving the browser closing). Progress is
+// persisted as events and polled via GET /api/runs/:id.
+app.post('/api/agents/:id/run', wrap(async (req, res) => {
+  const agent = await db.getAgent(req.uid, req.params.id);
+  if (!agent) return res.status(404).json({ error: 'agent not found' });
+  const model = agent.model_id ? await db.getModel(req.uid, agent.model_id) : null;
+  if (!model) return res.status(400).json({ error: 'agent has no valid model' });
+  const task = req.body?.task || 'Introduce yourself and your capabilities.';
+  const run = await db.createRun(req.uid, { agentId: agent.id, agentName: agent.name, task });
+  startAgentRun(req.uid, run.id, agent, model, task); // fire-and-forget
+  res.json({ runId: run.id });
+}));
 
+// The detached executor.
+async function startAgentRun(uid, runId, agent, model, task) {
+  let seq = 0;
+  const emit = (ev) => { db.addRunEvent(uid, runId, seq++, ev.type, ev).catch(() => {}); };
+  try {
+    const [keys, skills, models, agents, autoList] = await Promise.all([
+      db.getUserKeys(uid), db.listSkills(uid), db.listModels(uid), db.listAgents(uid), db.listAutoApprovals(uid),
+    ]);
+    const autoApproved = new Set(autoList);
+    emit({ type: 'start', agent: agent.name, model: model.label });
     let reqCounter = 0;
     const requestApproval = async (tool, input) => {
-      if (autoApproved.has(tool)) return true;                 // "approve every time" already chosen
+      if (autoApproved.has(tool)) return true;
       const reqId = String(++reqCounter);
-      send({ type: 'approval_request', reqId, tool, input });
-      const decision = await waitForApproval(req.uid, runId, reqId);
-      send({ type: 'approval_resolved', reqId, decision });
-      if (decision === 'always') { autoApproved.add(tool); await db.addAutoApproval(req.uid, tool); }
+      emit({ type: 'approval_request', reqId, tool, input });
+      await db.setRunStatus(uid, runId, 'awaiting_approval');
+      const decision = await waitForApproval(uid, runId, reqId, 30 * 60 * 1000); // 30 min
+      emit({ type: 'approval_resolved', reqId, decision });
+      await db.setRunStatus(uid, runId, 'running');
+      if (decision === 'always') { autoApproved.add(tool); await db.addAutoApproval(uid, tool); }
       return decision === 'once' || decision === 'always';
     };
+    const result = await runAgent({ uid, agent, model, keys, skills, models, agents, task, onEvent: emit, requestApproval });
+    await db.setRunStatus(uid, runId, 'done', result?.text || '');
+  } catch (e) {
+    emit({ type: 'error', text: String(e.message || e) });
+    await db.setRunStatus(uid, runId, 'error', String(e.message || e)).catch(() => {});
+  }
+}
 
-    try {
-      await runAgent({ uid: req.uid, agent, model, keys, skills, task: req.body?.task, onEvent: send, requestApproval });
-    } catch (e) { send({ type: 'error', text: String(e.message || e) }); }
-    res.end();
-  } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
-});
+// Runs list + detail (polled by the UI).
+app.get('/api/agents/runs', wrap(async (req, res) => res.json(await db.listRuns(req.uid))));
+app.get('/api/runs/:id', wrap(async (req, res) => {
+  const r = await db.getRun(req.uid, req.params.id);
+  if (!r) return res.status(404).json({ error: 'run not found' });
+  res.json(r);
+}));
 
-// Resolve a pending approval request from a live agent run.
+// Resolve a pending approval for a (possibly background) run.
 app.post('/api/agents/approve', wrap(async (req, res) => {
   const { runId, reqId, decision } = req.body || {};
   const ok = resolveApproval(req.uid, runId, reqId, decision);

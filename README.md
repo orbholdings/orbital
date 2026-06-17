@@ -19,7 +19,9 @@ by **Supabase** (Postgres + Auth + Storage) and deployable on **Coolify** or any
 - 🗂 **Combined + separate files** — one shared tree plus a private tree per model, with real file uploads to Supabase Storage.
 - ⚡ **Streaming chat with saved history** — replies stream in token-by-token, every conversation is saved, and you can reopen or **search** past chats.
 - 🔑 **Per-user keys** — each user can paste their own provider API keys in **Settings**; stored AES-256-GCM encrypted, never returned to the browser, and override any server key.
-- 🤖 **Agents that really act** — a ReAct loop where the agent calls real tools (`memory.write/search`, `files.read/write/list`, `web.fetch`, `skill.run`), the server executes them, and the trace streams live step-by-step.
+- 🤖 **Agents that really act** — a ReAct loop where the agent calls real tools (`memory.write/search`, `files.read/write/list`, `web.fetch`, `skill.run`) and the server executes them.
+- 🌙 **Background runs** — agents keep working after you close the window; runs persist to the database and you reopen them from "Recent runs" to watch live progress (with approvals).
+- 🤝 **Multi-AI agents** — an agent can `ask_model` (consult any other model one-shot) and `ask_agent` (delegate a subtask to another agent), so one agent can orchestrate many.
 - ✦ **Skills** — author reusable named instructions; agents invoke them with `skill.run`, or test-run them yourself.
 - 🔌 **Harnesses** — OpenRouter, Ollama, NotebookLM, LangChain — install with one click.
 - 🛰 **Providers** — OpenRouter (one key, most models), Ollama (local), direct Claude/OpenAI/Gemini/GLM/Kimi/**xAI (Grok)**, or a **Custom** OpenAI-compatible endpoint (DeepSeek, Groq, Mistral, your own server…) — just add a base URL + key.
@@ -163,13 +165,19 @@ GET  /api/harnesses · POST /api/harnesses/:id/install
 When you run an agent, the server starts a **ReAct loop**: the model is asked to
 reply with one JSON action per turn (`{"action":"files.write","action_input":{…}}`),
 the server **executes the real tool**, feeds the result back as an observation, and
-loops until the model returns a `final` answer (max 8 steps). Every step streams to
-the UI so you can watch it think and act. Built-in tools:
+loops until the model returns a `final` answer (max 8 steps). The run executes
+**in the background** and persists each step to the database, so closing the window
+doesn't stop it — reopen it from **Recent runs** to watch live progress. Built-in tools:
 
 - `memory.write` / `memory.search` — read & write the shared/private memory.
 - `files.list` / `files.read` / `files.write` — work in the combined or per-model trees.
 - `web.fetch` — fetch a public URL's readable text (8s timeout, http/https only).
 - `skill.run` — run one of your saved **Skills** by name.
+- `ask_model` — consult any other model one-shot (e.g. Hermes asks Grok a question).
+- `ask_agent` — delegate a subtask to another agent (depth-capped); its steps fold into the trace.
+
+> **Note:** background runs live in the app's memory while executing. If the
+> container restarts mid-run, an in-flight run won't resume (it's left as-is).
 
 ### Approvals (human in the loop)
 

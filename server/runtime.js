@@ -55,8 +55,12 @@ function systemPrompt(agent, model, catalog, memory) {
 //   {type:'final',text} {type:'error',text}
 // requestApproval(tool, input) -> resolves true (proceed) or false (denied).
 // Defaults to auto-approve when not provided (e.g. internal/test callers).
-export async function runAgent({ uid, agent, model, keys, task, skills = [], onEvent = () => {}, requestApproval = async () => true }) {
-  const catalog = toolCatalog(agent.tools, skills);
+export async function runAgent({ uid, agent, model, keys, task, skills = [], models = [], agents = [], depth = 0, onEvent = () => {}, requestApproval = async () => true }) {
+  const otherModels = models.map((m) => m.label).join(', ');
+  const otherAgents = agents.filter((a) => a.id !== agent.id).map((a) => a.name).join(', ');
+  const catalog = toolCatalog(agent.tools, skills)
+    + (models.length ? `\n- ask_model — ask another model one question. args: { "model": "name", "prompt": "..." }. Models: ${otherModels}` : '')
+    + (otherAgents ? `\n- ask_agent — delegate a task to another agent. args: { "agent": "name", "task": "..." }. Agents: ${otherAgents}` : '');
   const memory = await db.memoryContextFor(uid, model);
   const messages = [
     { role: 'system', content: systemPrompt(agent, model, catalog, memory) },
@@ -69,6 +73,26 @@ export async function runAgent({ uid, agent, model, keys, task, skills = [], onE
       const s = skillByName(name);
       if (!s) return `Error: no skill named "${name}".`;
       return runSkill({ uid, model, keys, skill: s, input });
+    },
+    // Multi-AI: ask any other model one-shot.
+    askModel: async (ref, prompt) => {
+      const m = models.find((x) => x.id === ref || x.label?.toLowerCase() === String(ref).toLowerCase());
+      if (!m) return `Error: no model named "${ref}".`;
+      const out = await chat({ provider: m.provider, model: m.model, settings: m.settings, keys, messages: [{ role: 'user', content: String(prompt || '') }] });
+      return out.text;
+    },
+    // Multi-AI: delegate to a sub-agent (depth-capped); its steps feed the trace.
+    askAgent: async (ref, subTask) => {
+      if (depth >= 2) return 'Error: max delegation depth reached.';
+      const sub = agents.find((a) => a.name?.toLowerCase() === String(ref).toLowerCase());
+      if (!sub) return `Error: no agent named "${ref}".`;
+      const subModel = sub.model_id ? models.find((m) => m.id === sub.model_id) : model;
+      if (!subModel) return `Error: agent "${ref}" has no model.`;
+      const r = await runAgent({
+        uid, agent: sub, model: subModel, keys, task: subTask, skills, models, agents, depth: depth + 1,
+        requestApproval, onEvent: (ev) => onEvent({ ...ev, sub: sub.name }),
+      });
+      return r.text;
     },
   };
 

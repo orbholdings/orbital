@@ -163,7 +163,7 @@ function openModal(title, bodyNode) {
   const body = $('#modal-body'); body.innerHTML = ''; body.appendChild(bodyNode);
   $('#modal').hidden = false;
 }
-const closeModal = () => ($('#modal').hidden = true);
+const closeModal = () => { if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; } $('#modal').hidden = true; };
 $('#modal-close').onclick = closeModal;
 $('#modal').onclick = (e) => { if (e.target.id === 'modal') closeModal(); };
 
@@ -564,51 +564,98 @@ async function renderAgents(c) {
     if (ed) agentForm(models, agents.find((a) => a.id === ed));
     if (run) agentRunModal(agents.find((a) => a.id === run));
   };
+
+  // Recent background runs (keep working after you close the box).
+  const runs = await api('/agents/runs').catch(() => []);
+  const RUN_BADGE = { running: 'running', awaiting_approval: 'needs approval', done: 'done', error: 'error' };
+  const sect = el(`<div style="margin-top:24px"><h3 style="margin:0 0 10px">Recent runs</h3><div class="list" id="runs-list"></div></div>`);
+  c.appendChild(sect);
+  const rl = $('#runs-list', sect);
+  if (!runs.length) rl.appendChild(el('<p class="muted small">No runs yet. Run an agent — it keeps working even if you close the window.</p>'));
+  else runs.forEach((r) => rl.appendChild(el(`<div class="list-item" data-run-open="${r.id}" style="cursor:pointer">
+    <div style="display:flex;gap:12px;align-items:center;min-width:0"><div class="avatar">${r.status === 'running' ? '<span class="spinner"></span>' : r.status === 'error' ? '⚠️' : r.status === 'awaiting_approval' ? '🔐' : '✅'}</div>
+      <div class="meta" style="min-width:0"><b style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.agent_name)} · ${esc(r.task)}</b><span class="muted small">${new Date(r.created_at).toLocaleString()}</span></div></div>
+    <span class="pill ${r.status === 'done' ? 'on' : r.status === 'error' ? '' : 'accent'}">${RUN_BADGE[r.status] || r.status}</span></div>`)));
+  rl.onclick = (e) => { const id = e.target.closest('[data-run-open]')?.dataset.runOpen; if (id) runViewerModal(id); };
 }
 
-// Live agent run: streams thought → tool → observation steps as they happen.
-const STEP_ICON = { thought: '💭', action: '🛠', observation: '↳', final: '✅', error: '⚠️', start: '▶' };
+// Start a background run, then poll its trace. Closing the box does NOT stop it.
 function agentRunModal(agent) {
   const body = el(`<div>
     <label class="field">Task<textarea id="run-task" style="min-height:64px" placeholder="What should ${esc(agent.name)} do?">Introduce yourself and your capabilities.</textarea></label>
     <div class="modal-foot"><button class="btn" id="cancel">Close</button><button class="btn primary" id="go">Run agent</button></div>
+    <p class="muted small" id="run-note" style="margin-top:8px"></p>
     <div id="trace" class="run-trace"></div></div>`);
   openModal(`Run ${agent.name}`, body);
   $('#cancel', body).onclick = closeModal;
   $('#go', body).onclick = async () => {
     const task = $('#run-task', body).value.trim();
-    const trace = $('#trace', body); trace.innerHTML = '';
     $('#go', body).disabled = true;
-    let runId = null;
-    const add = (cls, label, text) => { trace.appendChild(el(`<div class="step ${cls}"><span class="step-label">${label}</span><span class="step-text">${esc(text)}</span></div>`)); trace.scrollTop = trace.scrollHeight; };
-    const askApproval = (ev) => {
-      const node = el(`<div class="step approval"><span class="step-label">🔐 approve?</span>
-        <span class="step-text"><b>${esc(ev.tool)}</b> ${esc(JSON.stringify(ev.input))}
-        <span class="approve-row">
-          <button class="btn small primary" data-d="once">Approve once</button>
-          <button class="btn small" data-d="always">Approve every time</button>
-          <button class="btn small danger" data-d="deny">Deny</button>
-        </span></span></div>`);
-      trace.appendChild(node); trace.scrollTop = trace.scrollHeight;
-      node.querySelector('.approve-row').onclick = async (e) => {
-        const d = e.target.dataset.d; if (!d) return;
-        node.querySelectorAll('button').forEach((b) => (b.disabled = true));
-        try { await api('/agents/approve', { method: 'POST', body: JSON.stringify({ runId, reqId: ev.reqId, decision: d }) }); } catch {}
-        $('.approve-row', node).innerHTML = `<span class="muted small">${d === 'deny' ? 'denied' : d === 'always' ? 'approved · always' : 'approved'}</span>`;
-      };
-    };
+    $('#run-note', body).textContent = 'Running in the background — you can close this window and reopen it from "Recent runs".';
     try {
-      await streamSSE(`/agents/${agent.id}/run`, { task }, (ev) => {
-        if (ev.type === 'start') { runId = ev.runId; add('start', '▶ start', `${ev.agent} · ${ev.model}`); }
-        else if (ev.type === 'thought') add('thought', '💭 thinking', ev.text);
-        else if (ev.type === 'action') add('action', `🛠 ${ev.tool}`, JSON.stringify(ev.input));
-        else if (ev.type === 'approval_request') askApproval(ev);
-        else if (ev.type === 'observation') add('obs', '↳ result', ev.text);
-        else if (ev.type === 'final') add('final', ev.demo ? '✅ done · demo' : '✅ done', ev.text);
-        else if (ev.type === 'error') add('error', '⚠️ error', ev.text);
-      });
-    } catch (e) { if (e.message !== 'signed out') add('error', '⚠️ error', e.message); }
-    $('#go', body).disabled = false;
+      const { runId } = await api(`/agents/${agent.id}/run`, { method: 'POST', body: JSON.stringify({ task }) });
+      pollRun(runId, $('#trace', body));
+    } catch (e) { $('#trace', body).innerHTML = `<div class="step error"><span class="step-text">${esc(e.message)}</span></div>`; $('#go', body).disabled = false; }
+  };
+}
+
+// Open an existing run (from the Recent runs list).
+function runViewerModal(runId) {
+  const body = el(`<div><p class="muted small">Live trace — updates automatically.</p><div id="trace" class="run-trace" style="max-height:60vh"></div>
+    <div class="modal-foot"><button class="btn" id="cancel">Close</button></div></div>`);
+  openModal('Agent run', body);
+  $('#cancel', body).onclick = closeModal;
+  pollRun(runId, $('#trace', body));
+}
+
+// Poll a run's events every 1.5s and render the trace. Stops on done/error or modal close.
+function pollRun(runId, trace) {
+  if (state.pollTimer) clearInterval(state.pollTimer);
+  const render = (run, events) => {
+    trace.innerHTML = '';
+    events.forEach((ev) => {
+      const d = ev.data || {};
+      const subPfx = d.sub ? `<span class="pill" style="margin-right:6px">${esc(d.sub)}</span>` : '';
+      if (ev.type === 'start') addStep(trace, 'start', '▶ start', `${d.agent} · ${d.model}`, subPfx);
+      else if (ev.type === 'thought') addStep(trace, 'thought', '💭 thinking', d.text, subPfx);
+      else if (ev.type === 'action') addStep(trace, 'action', `🛠 ${d.tool}`, JSON.stringify(d.input), subPfx);
+      else if (ev.type === 'observation') addStep(trace, 'obs', '↳ result', d.text, subPfx);
+      else if (ev.type === 'final') addStep(trace, 'final', '✅ done', d.text, subPfx);
+      else if (ev.type === 'error') addStep(trace, 'error', '⚠️ error', d.text, subPfx);
+      else if (ev.type === 'approval_request') {
+        const resolved = events.find((x) => x.type === 'approval_resolved' && x.data?.reqId === d.reqId);
+        if (resolved) addStep(trace, 'approval', '🔐 ' + (resolved.data.decision === 'deny' ? 'denied' : 'approved'), `${d.tool} ${JSON.stringify(d.input)}`, subPfx);
+        else addApproval(trace, runId, d);
+      }
+    });
+    trace.scrollTop = trace.scrollHeight;
+  };
+  const tick = async () => {
+    try {
+      const { run, events } = await api(`/runs/${runId}`);
+      render(run, events);
+      if (run.status === 'done' || run.status === 'error') { clearInterval(state.pollTimer); state.pollTimer = null; }
+    } catch (e) { if (e.message === 'signed out') { clearInterval(state.pollTimer); state.pollTimer = null; } }
+  };
+  tick();
+  state.pollTimer = setInterval(tick, 1500);
+}
+function addStep(trace, cls, label, text, pfx = '') {
+  trace.appendChild(el(`<div class="step ${cls}"><span class="step-label">${label}</span><span class="step-text">${pfx}${esc(text ?? '')}</span></div>`));
+}
+function addApproval(trace, runId, d) {
+  const node = el(`<div class="step approval"><span class="step-label">🔐 approve?</span>
+    <span class="step-text"><b>${esc(d.tool)}</b> ${esc(JSON.stringify(d.input))}
+    <span class="approve-row">
+      <button class="btn small primary" data-d="once">Approve once</button>
+      <button class="btn small" data-d="always">Approve every time</button>
+      <button class="btn small danger" data-d="deny">Deny</button>
+    </span></span></div>`);
+  trace.appendChild(node);
+  node.querySelector('.approve-row').onclick = async (e) => {
+    const dec = e.target.dataset.d; if (!dec) return;
+    node.querySelectorAll('button').forEach((b) => (b.disabled = true));
+    try { await api('/agents/approve', { method: 'POST', body: JSON.stringify({ runId, reqId: d.reqId, decision: dec }) }); } catch {}
   };
 }
 

@@ -222,6 +222,36 @@ export async function searchMessages(uid, q) {
   return hits.map((h) => ({ ...h, conversationTitle: titleById[h.conversation_id] || 'Chat' }));
 }
 
+// ---------- AGENT RUNS (background execution + trace) -------------------
+export async function createRun(uid, { agentId, agentName, task }) {
+  must();
+  return rows(await admin.from('agent_runs').insert({
+    user_id: uid, agent_id: agentId || null, agent_name: agentName || 'Agent', task: task || '', status: 'running',
+  }).select().single());
+}
+export async function addRunEvent(uid, runId, seq, type, data = {}) {
+  must();
+  rows(await admin.from('agent_run_events').insert({ user_id: uid, run_id: runId, seq, type, data }));
+}
+export async function setRunStatus(uid, runId, status, result) {
+  must();
+  const patch = { status, updated_at: new Date().toISOString() };
+  if (result !== undefined) patch.result = result;
+  rows(await admin.from('agent_runs').update(patch).eq('user_id', uid).eq('id', runId));
+}
+export async function listRuns(uid, limit = 25) {
+  must();
+  return rows(await admin.from('agent_runs').select('id, agent_name, task, status, result, created_at, updated_at')
+    .eq('user_id', uid).order('created_at', { ascending: false }).limit(limit));
+}
+export async function getRun(uid, id) {
+  must();
+  const run = rows(await admin.from('agent_runs').select('*').eq('user_id', uid).eq('id', id).maybeSingle());
+  if (!run) return null;
+  const events = rows(await admin.from('agent_run_events').select('seq, type, data').eq('user_id', uid).eq('run_id', id).order('seq'));
+  return { run, events };
+}
+
 // ---------- SKILLS -------------------------------------------------------
 export async function listSkills(uid) {
   must();
