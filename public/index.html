@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Orbital</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <!-- Auth gate -->
+  <div class="auth" id="auth-screen" hidden>
+    <div class="auth-card">
+      <div class="brand" style="justify-content:center;padding-bottom:8px">
+        <div class="brand-mark">🛰</div>
+        <div class="brand-text"><span class="brand-name">Orbital</span><span class="brand-sub">multi-LLM workbench</span></div>
+      </div>
+      <p class="muted small" id="auth-msg" style="text-align:center;margin:0 0 16px">Sign in to your workspace</p>
+      <label class="field">Email<input id="auth-email" type="email" placeholder="you@example.com" autocomplete="email"></label>
+      <label class="field">Password<input id="auth-pass" type="password" placeholder="••••••••" autocomplete="current-password"></label>
+      <button class="btn primary" id="auth-submit" style="width:100%;margin-top:4px">Sign in</button>
+      <p class="small" style="text-align:center;margin-top:14px">
+        <span id="auth-toggle-text" class="muted">No account?</span>
+        <a href="#" id="auth-toggle" style="color:var(--accent-2);text-decoration:none">Create one</a>
+      </p>
+      <p class="small" id="auth-error" style="color:var(--danger);text-align:center;min-height:16px"></p>
+    </div>
+  </div>
+
+  <!-- App -->
+  <div class="app" id="app" hidden>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">🛰</div>
+        <div class="brand-text"><span class="brand-name">Orbital</span><span class="brand-sub">multi-LLM workbench</span></div>
+      </div>
+      <nav class="nav" id="nav">
+        <button class="nav-item active" data-view="overview"><span>◴</span> Overview</button>
+        <button class="nav-item" data-view="chat"><span>✺</span> Chat</button>
+        <button class="nav-item" data-view="models"><span>◍</span> Models</button>
+        <button class="nav-item" data-view="memory"><span>❖</span> Memory</button>
+        <button class="nav-item" data-view="files"><span>▤</span> Files</button>
+        <button class="nav-item" data-view="agents"><span>✷</span> Agents</button>
+        <button class="nav-item" data-view="skills"><span>✦</span> Skills</button>
+        <button class="nav-item" data-view="harnesses"><span>⊕</span> Harnesses</button>
+        <button class="nav-item" data-view="settings"><span>⚙</span> Settings</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="status-line" id="provider-dots"></div>
+        <div class="row" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <span class="muted small" id="user-email" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+          <button class="btn small ghost" id="signout">Sign out</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div><h1 id="view-title">Overview</h1><p class="muted small" id="view-sub">Your constellation at a glance</p></div>
+        <div class="topbar-actions" id="topbar-actions"></div>
+      </header>
+      <section class="content" id="content"></section>
+    </main>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal-backdrop" id="modal" hidden>
+    <div class="modal">
+      <div class="modal-head"><h3 id="modal-title">Edit</h3><button class="icon-btn" id="modal-close">✕</button></div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
