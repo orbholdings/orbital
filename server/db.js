@@ -171,6 +171,56 @@ export async function toggleHarness(uid, id) {
     .eq('user_id', uid).eq('id', id).select().single());
 }
 
+// ---------- CONVERSATIONS & MESSAGES (chat history) ---------------------
+export async function listConversations(uid) {
+  must();
+  return rows(await admin.from('conversations').select('*').eq('user_id', uid).order('updated_at', { ascending: false }));
+}
+export async function createConversation(uid, { modelId = null, title = 'New chat' } = {}) {
+  must();
+  return rows(await admin.from('conversations').insert({ user_id: uid, model_id: modelId, title }).select().single());
+}
+export async function getConversation(uid, id) {
+  must();
+  return rows(await admin.from('conversations').select('*').eq('user_id', uid).eq('id', id).maybeSingle());
+}
+export async function renameConversation(uid, id, title) {
+  must();
+  return rows(await admin.from('conversations').update({ title }).eq('user_id', uid).eq('id', id).select().single());
+}
+export async function touchConversation(uid, id, patch = {}) {
+  must();
+  rows(await admin.from('conversations').update({ updated_at: new Date().toISOString(), ...patch }).eq('user_id', uid).eq('id', id));
+}
+export async function deleteConversation(uid, id) {
+  must();
+  rows(await admin.from('conversations').delete().eq('user_id', uid).eq('id', id));
+}
+export async function getMessages(uid, conversationId) {
+  must();
+  return rows(await admin.from('messages').select('*').eq('user_id', uid).eq('conversation_id', conversationId).order('created_at'));
+}
+export async function addMessage(uid, conversationId, role, content) {
+  must();
+  const m = rows(await admin.from('messages').insert({ user_id: uid, conversation_id: conversationId, role, content }).select().single());
+  await touchConversation(uid, conversationId);
+  return m;
+}
+// Full-text-ish search across the user's messages; returns hits with their conversation.
+export async function searchMessages(uid, q) {
+  must();
+  if (!q || !q.trim()) return [];
+  const hits = rows(await admin.from('messages')
+    .select('id, conversation_id, role, content, created_at')
+    .eq('user_id', uid).ilike('content', `%${q.trim()}%`)
+    .order('created_at', { ascending: false }).limit(50));
+  if (!hits.length) return [];
+  const convIds = [...new Set(hits.map((h) => h.conversation_id))];
+  const convs = rows(await admin.from('conversations').select('id, title').eq('user_id', uid).in('id', convIds));
+  const titleById = Object.fromEntries(convs.map((c) => [c.id, c.title]));
+  return hits.map((h) => ({ ...h, conversationTitle: titleById[h.conversation_id] || 'Chat' }));
+}
+
 // ---------- SKILLS -------------------------------------------------------
 export async function listSkills(uid) {
   must();
@@ -258,7 +308,7 @@ const DEFAULT_MODELS = [
   { label: 'Claude', provider: 'openrouter', model: 'anthropic/claude-sonnet-4', settings: { systemPrompt: 'You are Claude, thoughtful and precise.' } },
   { label: 'ChatGPT', provider: 'openrouter', model: 'openai/gpt-4o' },
   { label: 'Gemini', provider: 'openrouter', model: 'google/gemini-2.0-flash-001' },
-  { label: 'GLM 5.2', provider: 'openrouter', model: 'z-ai/glm-4.6' },
+  { label: 'GLM 5.2', provider: 'openrouter', model: 'z-ai/glm-5.2' },
   { label: 'Kimi', provider: 'openrouter', model: 'moonshotai/kimi-k2' },
   { label: 'Llama (local)', provider: 'ollama', model: 'llama3.1', settings: { temperature: 0.8 } },
 ];

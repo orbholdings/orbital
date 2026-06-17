@@ -19,11 +19,11 @@ const api = async (path, opts = {}) => {
 
 // Stream a chat reply token-by-token. Calls onToken(str) per chunk; resolves
 // with { text, demo }. Uses fetch (not EventSource) so we can send the JWT.
-async function streamChat(modelId, messages, onToken) {
+async function streamChat({ conversationId, text, modelId }, onToken) {
   const r = await fetch('/api/chat/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-    body: JSON.stringify({ modelId, messages }),
+    body: JSON.stringify({ conversationId, text, modelId }),
   });
   if (r.status === 401) { showAuth('Your session expired. Please sign in again.'); throw new Error('signed out'); }
   if (!r.ok || !r.body) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
@@ -241,6 +241,7 @@ async function renderOverview(c) {
 async function renderChat(c) {
   const models = await api('/models');
   if (!state.chatModel && models[0]) state.chatModel = models[0].id;
+  const modelLabel = (id) => models.find((m) => m.id === id)?.label || 'model';
   const actions = el(`<div style="display:flex;gap:10px"><button class="btn small" id="single-mode">Single</button><button class="btn small primary" id="bcast-mode">Broadcast</button></div>`);
   $('#topbar-actions').innerHTML = ''; $('#topbar-actions').appendChild(actions);
   let mode = 'single';
@@ -252,38 +253,114 @@ async function renderChat(c) {
   $('#single-mode').onclick = () => { mode = 'single'; draw(); };
   $('#bcast-mode').onclick = () => { mode = 'broadcast'; draw(); };
 
-  function drawSingle() {
+  async function drawSingle() {
     c.innerHTML = '';
     const opts = models.map((m) => `<option value="${m.id}" ${m.id === state.chatModel ? 'selected' : ''}>${esc(m.label)}</option>`).join('');
-    const wrap = el(`<div class="chat-wrap"><div class="chat-pane">
-      <div class="chat-head"><select id="chat-model" style="width:auto">${opts}</select></div>
-      <div class="chat-log" id="log"></div>
-      <div class="chat-input"><input id="chat-text" placeholder="Message the model…" /><button class="btn primary" id="send">Send</button></div>
-    </div></div>`);
+    const wrap = el(`<div class="chat-layout">
+      <aside class="chat-side">
+        <button class="btn small primary" id="new-chat" style="width:100%">+ New chat</button>
+        <input id="chat-search" placeholder="Search chats…" style="margin:10px 0" />
+        <div class="convo-list" id="convo-list"></div>
+      </aside>
+      <div class="chat-pane">
+        <div class="chat-head"><select id="chat-model" style="width:auto">${opts}</select><span class="muted small" id="convo-title"></span></div>
+        <div class="chat-log" id="log"></div>
+        <div class="chat-input"><input id="chat-text" placeholder="Message the model…" /><button class="btn primary" id="send">Send</button></div>
+      </div></div>`);
     c.appendChild(wrap);
-    const history = [], log = $('#log', wrap);
+    const log = $('#log', wrap), listEl = $('#convo-list', wrap), titleEl = $('#convo-title', wrap);
     $('#chat-model', wrap).onchange = (e) => (state.chatModel = e.target.value);
+
+    const bubble = (role, content, who) => {
+      const cls = role === 'user' ? 'user' : 'bot';
+      return el(`<div class="msg ${cls}"><div class="who">${esc(who || (role === 'user' ? 'you' : 'assistant'))}</div><span class="body">${esc(content)}</span></div>`);
+    };
+    const showMessages = (msgs) => {
+      log.innerHTML = '';
+      if (!msgs.length) { log.appendChild(el('<div class="empty" style="margin:auto">Say something to start this chat.</div>')); return; }
+      msgs.forEach((m) => log.appendChild(bubble(m.role, m.content, m.role === 'assistant' ? modelLabel(state.chatModel) : 'you')));
+      log.scrollTop = log.scrollHeight;
+    };
+
+    async function loadList() {
+      const convos = await api('/conversations');
+      listEl.innerHTML = '';
+      if (!convos.length) { listEl.appendChild(el('<p class="muted small" style="padding:8px">No saved chats yet.</p>')); return; }
+      convos.forEach((cv) => {
+        const item = el(`<div class="convo-item ${cv.id === state.currentConvo ? 'active' : ''}" data-id="${cv.id}">
+          <span class="convo-title">${esc(cv.title)}</span>
+          <button class="icon-btn convo-del" data-del="${cv.id}" title="Delete">✕</button></div>`);
+        listEl.appendChild(item);
+      });
+    }
+
+    async function openConvo(id) {
+      state.currentConvo = id;
+      const cv = (await api('/conversations')).find((x) => x.id === id);
+      if (cv?.model_id) { state.chatModel = cv.model_id; $('#chat-model', wrap).value = cv.model_id; }
+      titleEl.textContent = cv?.title || '';
+      const msgs = await api(`/conversations/${id}/messages`);
+      showMessages(msgs);
+      loadList();
+    }
+
+    async function newChat() {
+      const cv = await api('/conversations', { method: 'POST', body: JSON.stringify({ modelId: state.chatModel }) });
+      state.currentConvo = cv.id;
+      titleEl.textContent = cv.title;
+      showMessages([]);
+      loadList();
+      $('#chat-text', wrap).focus();
+    }
+
     const send = async () => {
       const input = $('#chat-text', wrap), text = input.value.trim(); if (!text) return;
+      if (!state.currentConvo) await newChat();
       input.value = '';
-      history.push({ role: 'user', content: text });
-      log.appendChild(el(`<div class="msg user"><div class="who">you</div>${esc(text)}</div>`));
-      const m = models.find((x) => x.id === state.chatModel);
-      const bot = el(`<div class="msg bot"><div class="who">${esc(m.label)}</div><span class="body"><span class="spinner"></span></span></div>`);
+      if ($('.empty', log)) log.innerHTML = '';
+      log.appendChild(bubble('user', text, 'you'));
+      const bot = el(`<div class="msg bot"><div class="who">${esc(modelLabel(state.chatModel))}</div><span class="body"><span class="spinner"></span></span></div>`);
       log.appendChild(bot); log.scrollTop = log.scrollHeight;
       const bodyEl = $('.body', bot), whoEl = $('.who', bot);
       try {
-        const out = await streamChat(state.chatModel, history, (sofar) => {
+        const out = await streamChat({ conversationId: state.currentConvo, text, modelId: state.chatModel }, (sofar) => {
           bodyEl.textContent = sofar; log.scrollTop = log.scrollHeight;
         });
-        if (out.demo) whoEl.textContent = `${m.label} · demo`;
+        if (out.demo) whoEl.textContent = `${modelLabel(state.chatModel)} · demo`;
         if (!out.text) bodyEl.textContent = '(no response)';
-        history.push({ role: 'assistant', content: out.text });
+        loadList(); // title/order may have changed
       } catch (e) { if (e.message !== 'signed out') { whoEl.textContent = 'error'; bodyEl.textContent = e.message; } }
       log.scrollTop = log.scrollHeight;
     };
+
+    // search across saved messages
+    let searchTimer;
+    $('#chat-search', wrap).oninput = (e) => {
+      clearTimeout(searchTimer);
+      const q = e.target.value.trim();
+      searchTimer = setTimeout(async () => {
+        if (!q) return loadList();
+        const hits = await api(`/conversations/search?q=${encodeURIComponent(q)}`);
+        listEl.innerHTML = '';
+        if (!hits.length) { listEl.appendChild(el('<p class="muted small" style="padding:8px">No matches.</p>')); return; }
+        hits.forEach((h) => listEl.appendChild(el(`<div class="convo-item" data-open="${h.conversation_id}">
+          <span class="convo-title">${esc(h.conversationTitle)}</span>
+          <span class="muted small convo-snippet">${esc(h.content.slice(0, 70))}</span></div>`)));
+      }, 250);
+    };
+
+    listEl.onclick = async (e) => {
+      const del = e.target.dataset.del;
+      if (del) { e.stopPropagation(); await api(`/conversations/${del}`, { method: 'DELETE' }); if (del === state.currentConvo) { state.currentConvo = null; showMessages([]); titleEl.textContent = ''; } return loadList(); }
+      const item = e.target.closest('[data-id],[data-open]');
+      if (item) openConvo(item.dataset.id || item.dataset.open);
+    };
+    $('#new-chat', wrap).onclick = newChat;
     $('#send', wrap).onclick = send;
     $('#chat-text', wrap).onkeydown = (e) => { if (e.key === 'Enter') send(); };
+
+    await loadList();
+    if (state.currentConvo) openConvo(state.currentConvo); else showMessages([]);
   }
 
   function drawBroadcast() {

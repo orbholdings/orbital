@@ -1,5 +1,6 @@
 node_modules
 .env
 data
+err.txt
 *.log
 .DS_Store

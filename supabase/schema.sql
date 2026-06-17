@@ -6,6 +6,25 @@
 -- ============================================================
 
 -- ---- Tables -------------------------------------------------
+-- Saved chat conversations and their messages (persistent chat history).
+create table if not exists public.conversations (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references auth.users(id) on delete cascade,
+  model_id    uuid,
+  title       text not null default 'New chat',
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create table if not exists public.messages (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid not null references auth.users(id) on delete cascade,
+  conversation_id uuid not null references public.conversations(id) on delete cascade,
+  role            text not null,              -- 'user' | 'assistant'
+  content         text not null default '',
+  created_at      timestamptz not null default now()
+);
+
 create table if not exists public.models (
   id          uuid primary key default gen_random_uuid(),
   user_id     uuid not null references auth.users(id) on delete cascade,
@@ -99,6 +118,9 @@ create index if not exists agents_user_idx     on public.agents(user_id);
 create index if not exists memory_user_idx     on public.memory(user_id);
 create index if not exists files_user_idx      on public.files(user_id);
 create index if not exists harnesses_user_idx  on public.harnesses(user_id);
+create index if not exists conversations_user_idx on public.conversations(user_id, updated_at desc);
+create index if not exists messages_conv_idx      on public.messages(conversation_id, created_at);
+create index if not exists messages_user_idx      on public.messages(user_id);
 
 -- ---- Row Level Security ------------------------------------
 -- The backend uses the service-role key (which bypasses RLS) and filters by
@@ -112,11 +134,13 @@ alter table public.harnesses     enable row level security;
 alter table public.provider_keys enable row level security;
 alter table public.skills        enable row level security;
 alter table public.auto_approvals enable row level security;
+alter table public.conversations enable row level security;
+alter table public.messages      enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['models','agents','memory','files','harnesses','provider_keys','skills','auto_approvals'] loop
+  foreach t in array array['models','agents','memory','files','harnesses','provider_keys','skills','auto_approvals','conversations','messages'] loop
     execute format('drop policy if exists "own rows" on public.%I;', t);
     execute format(
       'create policy "own rows" on public.%I for all

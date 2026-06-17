@@ -71,30 +71,57 @@ app.post('/api/chat', wrap(async (req, res) => {
   res.json(out);
 }));
 
-// Streaming chat over Server-Sent Events. The browser reads this with fetch()
-// (not EventSource) so it can send the Authorization header.
+// Streaming chat over SSE, persisted to a conversation. Body: { conversationId,
+// text, modelId? }. Saves the user message, streams the reply, saves the reply.
 app.post('/api/chat/stream', async (req, res) => {
   try {
-    const { modelId, messages } = req.body || {};
-    const model = await db.getModel(req.uid, modelId);
-    if (!model) return res.status(404).json({ error: 'model not found' });
+    const { conversationId, text, modelId } = req.body || {};
+    if (!conversationId || !text) return res.status(400).json({ error: 'conversationId and text required' });
+    const conv = await db.getConversation(req.uid, conversationId);
+    if (!conv) return res.status(404).json({ error: 'conversation not found' });
+    const model = await db.getModel(req.uid, modelId || conv.model_id);
+    if (!model) return res.status(400).json({ error: 'this chat has no valid model' });
     const keys = await db.getUserKeys(req.uid);
-    const built = await buildMessages(req.uid, model, messages || []);
+
+    // Build provider messages from saved history + the new turn.
+    const prior = await db.getMessages(req.uid, conversationId);
+    const convo = prior.map((m) => ({ role: m.role, content: m.content }));
+    convo.push({ role: 'user', content: text });
+    const built = await buildMessages(req.uid, model, convo);
+
+    // Persist the user message; set title from first message + remember model.
+    await db.addMessage(req.uid, conversationId, 'user', text);
+    const patch = {};
+    if (modelId && modelId !== conv.model_id) patch.model_id = modelId;
+    if (!conv.title || conv.title === 'New chat') patch.title = text.slice(0, 60);
+    if (Object.keys(patch).length) await db.touchConversation(req.uid, conversationId, patch);
+
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders?.();
     const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+    let full = '';
     try {
       const out = await chatStream(
         { provider: model.provider, model: model.model, messages: built, settings: model.settings, keys },
-        (token) => send({ token })
+        (token) => { full += token; send({ token }); }
       );
+      full = out.text || full;
+      await db.addMessage(req.uid, conversationId, 'assistant', full);
       send({ done: true, demo: !!out.demo });
     } catch (e) { send({ error: String(e.message || e) }); }
     res.end();
   } catch (e) { res.status(500).json({ error: String(e.message || e) }); }
 });
+
+// ---------- conversations (chat history) --------------------------------
+app.get('/api/conversations', wrap(async (req, res) => res.json(await db.listConversations(req.uid))));
+app.post('/api/conversations', wrap(async (req, res) => res.json(await db.createConversation(req.uid, req.body || {}))));
+app.get('/api/conversations/search', wrap(async (req, res) => res.json(await db.searchMessages(req.uid, req.query.q || ''))));
+app.get('/api/conversations/:id/messages', wrap(async (req, res) => res.json(await db.getMessages(req.uid, req.params.id))));
+app.post('/api/conversations/:id/rename', wrap(async (req, res) => res.json(await db.renameConversation(req.uid, req.params.id, req.body?.title || 'Chat'))));
+app.delete('/api/conversations/:id', wrap(async (req, res) => { await db.deleteConversation(req.uid, req.params.id); res.json({ ok: true }); }));
 
 app.post('/api/chat/broadcast', wrap(async (req, res) => {
   const { modelIds = [], message } = req.body || {};

@@ -17,7 +17,7 @@ by **Supabase** (Postgres + Auth + Storage) and deployable on **Coolify** or any
 - 🔐 **Auth** — each user signs in and gets their own isolated models, memory and files.
 - 🧠 **Shared + private memory** — every model reads the combined memory and can add to it.
 - 🗂 **Combined + separate files** — one shared tree plus a private tree per model, with real file uploads to Supabase Storage.
-- ⚡ **Streaming chat** — replies stream in token-by-token (all providers + demo mode).
+- ⚡ **Streaming chat with saved history** — replies stream in token-by-token, every conversation is saved, and you can reopen or **search** past chats.
 - 🔑 **Per-user keys** — each user can paste their own provider API keys in **Settings**; stored AES-256-GCM encrypted, never returned to the browser, and override any server key.
 - 🤖 **Agents that really act** — a ReAct loop where the agent calls real tools (`memory.write/search`, `files.read/write/list`, `web.fetch`, `skill.run`), the server executes them, and the trace streams live step-by-step.
 - ✦ **Skills** — author reusable named instructions; agents invoke them with `skill.run`, or test-run them yourself.
@@ -188,11 +188,27 @@ prompt. A request times out as a deny after 3 minutes.
 > server. On a private VPS this is usually fine; if you expose Orbital publicly,
 > consider restricting outbound network access or removing `web.fetch` from agents.
 
-## Notes & next steps
+## Roadmap
 
-A solid, working foundation with real tool/skill execution. Natural next moves:
-native function-calling for providers that support it, nested tool use inside
-skills, approval prompts before destructive tools, and wiring NotebookLM/LangChain
-harnesses to live SDKs. The structure is built so each slots in cleanly.
+Done, and what's next. Contributions welcome.
 
-MIT licensed. Built to be hacked on.
+**Shipped**
+- ✅ Multi-provider chat (OpenRouter, Ollama, direct) with a unified adapter
+- ✅ Supabase auth, per-user data isolation (RLS), Storage uploads
+- ✅ Per-user encrypted provider keys
+- ✅ Streaming responses + saved, searchable chat history
+- ✅ Shared + private memory; combined + per-model file trees
+- ✅ Agents with a real tool loop and human-in-the-loop approvals
+- ✅ User-authored skills
+
+**Planned**
+- ⬜ Native function-calling for providers that support it (instead of the JSON loop)
+- ⬜ Nested tool use *inside* skills
+- ⬜ Wire NotebookLM / LangChain harnesses to live SDKs
+- ⬜ Per-agent "autonomous mode" (trusted agents skip approval)
+- ⬜ Conversation export (Markdown / JSON)
+- ⬜ Optional SMTP for real email confirmation
+
+## License
+
+MIT. Built to be hacked on — PRs and forks welcome.
