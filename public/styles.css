@@ -16,6 +16,9 @@
 }
 
 * { box-sizing: border-box; }
+/* The [hidden] attribute must always win over the display rules below
+   (.app / .auth / .modal-backdrop set display, which otherwise overrides it). */
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body {
   font-family: 'Inter', system-ui, sans-serif;
