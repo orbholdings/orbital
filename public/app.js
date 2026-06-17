@@ -28,7 +28,7 @@ async function streamChat({ conversationId, text, modelId }, onToken) {
   if (r.status === 401) { showAuth('Your session expired. Please sign in again.'); throw new Error('signed out'); }
   if (!r.ok || !r.body) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
   const reader = r.body.getReader(), dec = new TextDecoder();
-  let buf = '', text = '', demo = false;
+  let buf = '', acc = '', demo = false;
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -37,12 +37,12 @@ async function streamChat({ conversationId, text, modelId }, onToken) {
     for (const p of parts) {
       const line = p.trim(); if (!line.startsWith('data:')) continue;
       let obj; try { obj = JSON.parse(line.slice(5).trim()); } catch { continue; }
-      if (obj.token) { text += obj.token; onToken(text); }
+      if (obj.token) { acc += obj.token; onToken(acc); }
       if (obj.error) throw new Error(obj.error);
       if (obj.done) demo = !!obj.demo;
     }
   }
-  return { text, demo };
+  return { text: acc, demo };
 }
 
 // Generic SSE reader: POST with auth, parse each `data:` line as JSON, call onEvent.
