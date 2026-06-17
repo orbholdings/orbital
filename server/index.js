@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import { loadEnv, ROOT, uid } from './util.js';
-import { chat, chatStream, providerStatus } from './providers.js';
+import { chat, chatStream, providerStatus, generateImage } from './providers.js';
 import { isConfigured, publicConfig, getUserFromToken } from './supabase.js';
 import { runAgent, runSkill } from './runtime.js';
 import { BUILTIN_TOOL_NAMES, APPROVAL_TOOLS } from './tools.js';
@@ -148,6 +148,18 @@ app.post('/api/files', wrap(async (req, res) => res.json(await db.upsertFile(req
 app.post('/api/files/upload', wrap(async (req, res) => res.json(await db.uploadFile(req.uid, req.body || {}))));
 app.get('/api/files/:id/url', wrap(async (req, res) => res.json({ url: await db.signedUrl(req.uid, req.params.id) })));
 app.delete('/api/files/:id', wrap(async (req, res) => { await db.deleteFile(req.uid, req.params.id); res.json({ ok: true }); }));
+
+// Generate an image (via OpenRouter) and save it to the user's files.
+app.post('/api/images/generate', wrap(async (req, res) => {
+  const { prompt, path, scope, aspect } = req.body || {};
+  const keys = await db.getUserKeys(req.uid);
+  const out = await generateImage({ prompt, keys, aspectRatio: aspect });
+  if (out.error) return res.status(400).json({ error: out.error });
+  const m = out.dataUrl.match(/^data:(.+?);base64,(.+)$/s);
+  if (!m) return res.status(502).json({ error: 'no usable image data' });
+  const file = await db.uploadFile(req.uid, { scope: scope || 'combined', filename: path || `images/gen_${Date.now()}.png`, contentType: m[1], base64: m[2] });
+  res.json(file);
+}));
 
 app.get('/api/agents', wrap(async (req, res) => res.json(await db.listAgents(req.uid))));
 app.post('/api/agents', wrap(async (req, res) => res.json(await db.upsertAgent(req.uid, req.body || {}))));

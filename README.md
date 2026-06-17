@@ -16,10 +16,11 @@ by **Supabase** (Postgres + Auth + Storage) and deployable on **Coolify** or any
 
 - 🔐 **Auth** — each user signs in and gets their own isolated models, memory and files.
 - 🧠 **Shared + private memory** — every model reads the combined memory and can add to it.
-- 🗂 **Combined + separate files** — one shared tree plus a private tree per model, with real file uploads to Supabase Storage.
+- 🗂 **Combined + separate files** — one shared tree plus a private tree per model, with real file uploads to Supabase Storage, a **collapsible folder tree**, and a **live preview** (HTML renders with sibling CSS/JS inlined; Markdown rendered) so you can see what an agent built.
 - ⚡ **Streaming chat with saved history** — replies stream in token-by-token, every conversation is saved, and you can reopen or **search** past chats.
 - 📡 **Broadcast & continue** — ask one question to many models at once, compare, then continue one-on-one with whichever answer you liked.
 - ✦ **Skill templates** — one-click ready-made skills (summarize, proofread, code-review, translate, email-draft and more) you can install and tweak.
+- 🎨 **AI image generation** — generate images from a prompt (via OpenRouter) straight into your Files; agents can make images too (e.g. a logo for a site they're building), and they render in the preview.
 - 🔑 **Per-user keys** — each user can paste their own provider API keys in **Settings**; stored AES-256-GCM encrypted, never returned to the browser, and override any server key.
 - 🤖 **Agents that really act** — a ReAct loop where the agent calls real tools (`memory.write/search`, `files.read/write/list`, `web.fetch`, `skill.run`) and the server executes them.
 - 🌙 **Background runs** — agents keep working after you close the window; runs persist to the database and you reopen them from "Recent runs" to watch live progress (with approvals).
@@ -30,6 +31,15 @@ by **Supabase** (Postgres + Auth + Storage) and deployable on **Coolify** or any
 
 > Without provider keys, models reply in clearly-labelled **demo mode**, so you can log in
 > and click around immediately. Add an OpenRouter key for real responses.
+
+## Screenshots
+
+> Drop a few screenshots or a short GIF here — it's the single biggest thing for a
+> repo getting noticed. Suggested shots: the **dashboard/overview**, **broadcast**
+> (several models answering side by side), an **agent run** trace with approvals, and
+> the **files preview**. Save them under `docs/` and reference like:
+>
+> `![Orbital dashboard](docs/dashboard.png)`
 
 ## Tech stack
 
@@ -180,6 +190,7 @@ doesn't stop it — reopen it from **Recent runs** to watch live progress. Built
 - `skill.run` — run one of your saved **Skills** by name.
 - `ask_model` — consult any other model one-shot (e.g. Hermes asks Grok a question).
 - `ask_agent` — delegate a subtask to another agent (depth-capped); its steps fold into the trace.
+- `generate_image` — create an image from a prompt (via OpenRouter) and save it to Files.
 
 > **Note:** background runs live in the app's memory while executing. If the
 > container restarts mid-run, an in-flight run won't resume (it's left as-is).

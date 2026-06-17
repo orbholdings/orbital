@@ -4,7 +4,7 @@
 //
 // Works with any chat model (no native function-calling required), including
 // Ollama. In demo mode (no API key) it returns the demo text as the answer.
-import { chat, chatWithTools, supportsTools } from './providers.js';
+import { chat, chatWithTools, supportsTools, generateImage } from './providers.js';
 import { toolCatalog, executeTool, toolNeedsApproval, openaiToolDefs, realToolName } from './tools.js';
 import * as db from './db.js';
 
@@ -98,11 +98,21 @@ export async function runAgent({ uid, agent, model, keys, task, skills = [], mod
       });
       return r.text;
     },
+    // Generate an image and save it to the user's files.
+    genImage: async (prompt, path, aspect) => {
+      const out = await generateImage({ prompt, keys, aspectRatio: aspect });
+      if (out.error) return `Error: ${out.error}`;
+      const m = out.dataUrl.match(/^data:(.+?);base64,(.+)$/s);
+      if (!m) return 'Error: image data was not usable.';
+      const filename = path || `images/gen_${Date.now()}.png`;
+      const file = await db.uploadFile(uid, { scope: 'combined', filename, contentType: m[1], base64: m[2] });
+      return `Created image "${file.path}".`;
+    },
   };
 
   // Tool names available to this agent (mirrors the catalog).
   const toolNames = [
-    ...(agent.tools?.length ? agent.tools : ['memory.write', 'memory.search', 'files.list', 'files.read', 'files.write', 'web.fetch']),
+    ...(agent.tools?.length ? agent.tools : ['memory.write', 'memory.search', 'files.list', 'files.read', 'files.write', 'web.fetch', 'generate_image']),
     ...(skills.length ? ['skill.run'] : []),
     ...(models.length ? ['ask_model'] : []),
     ...(agents.length ? ['ask_agent'] : []),

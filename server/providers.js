@@ -215,6 +215,27 @@ export async function chatWithTools({ provider, model, messages, tools, settings
   return { toolCalls, text: msg.content || '', assistantMsg: msg };
 }
 
+// ---------- image generation (via OpenRouter) ---------------------------
+// Returns { dataUrl } (data:image/png;base64,...) or { error }.
+export async function generateImage({ prompt, keys, model = 'google/gemini-2.5-flash-image', aspectRatio }) {
+  const key = (keys && keys.openrouter) || process.env.OPENROUTER_API_KEY;
+  if (!key) return { error: 'No OpenRouter key set. Add one in Settings to generate images.' };
+  if (!prompt || !prompt.trim()) return { error: 'A prompt is required.' };
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, 'HTTP-Referer': 'http://localhost', 'X-Title': 'Orbital' },
+    body: JSON.stringify({
+      model, modalities: ['image', 'text'], messages: [{ role: 'user', content: prompt }],
+      ...(aspectRatio ? { image_config: { aspect_ratio: aspectRatio } } : {}),
+    }),
+  });
+  if (!res.ok) return { error: `image gen ${res.status}: ${(await res.text()).slice(0, 200)}` };
+  const data = await res.json();
+  const url = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+  if (!url) return { error: 'The model returned no image. Try a different image model or prompt.' };
+  return { dataUrl: url };
+}
+
 // Which providers have a SERVER env key? (per-user keys are merged in the route)
 export function providerStatus() {
   return {

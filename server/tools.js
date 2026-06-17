@@ -107,6 +107,15 @@ export const TOOLS = {
       return clip(await ctx.askAgent(a.agent, a.input ?? a.task ?? ''), 6000);
     },
   },
+  'generate_image': {
+    description: 'Generate an image from a text prompt and save it as a file (e.g. for a website).',
+    args: '{ "prompt": "what to draw", "path": "images/hero.png", "aspect": "16:9" (optional) }',
+    needsApproval: true,
+    run: async (ctx, a) => {
+      if (!ctx.genImage) return 'Error: image generation unavailable.';
+      return ctx.genImage(a.prompt, a.path, a.aspect);
+    },
+  },
 };
 
 export const BUILTIN_TOOL_NAMES = Object.keys(TOOLS);
@@ -145,6 +154,7 @@ const TOOL_PARAMS = {
   'skill.run':     { type: 'object', properties: { name: str, input: str }, required: ['name'] },
   'ask_model':     { type: 'object', properties: { model: str, input: str }, required: ['model', 'input'] },
   'ask_agent':     { type: 'object', properties: { agent: str, input: str }, required: ['agent', 'input'] },
+  'generate_image': { type: 'object', properties: { prompt: str, path: str, aspect: str }, required: ['prompt'] },
 };
 
 // Provider function names can't contain dots — sanitize and map back.

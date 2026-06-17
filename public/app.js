@@ -496,37 +496,71 @@ async function renderMemory(c) {
 // ===================================================================
 //  FILES  (text files + Storage uploads)
 // ===================================================================
+const isHtml = (p) => /\.(html?|htm)$/i.test(p);
+const isMd = (p) => /\.(md|markdown)$/i.test(p);
+
+function buildFileTree(files) {
+  const root = { dirs: {}, files: [] };
+  for (const f of files) {
+    const parts = f.path.split('/');
+    let node = root;
+    for (let i = 0; i < parts.length - 1; i++) { const d = parts[i]; node.dirs[d] ||= { dirs: {}, files: [] }; node = node.dirs[d]; }
+    node.files.push({ ...f, name: parts[parts.length - 1] });
+  }
+  return root;
+}
+function renderTreeNode(node) {
+  const frag = document.createDocumentFragment();
+  Object.keys(node.dirs).sort().forEach((name) => {
+    const det = el(`<details open class="tree-dir"><summary>📁 ${esc(name)}</summary></details>`);
+    det.appendChild(renderTreeNode(node.dirs[name]));
+    frag.appendChild(det);
+  });
+  node.files.forEach((f) => {
+    const canPreview = !f.storage && (isHtml(f.name) || isMd(f.name));
+    frag.appendChild(el(`<div class="tree-file">
+      <span class="tree-name">${f.storage ? '📎' : isHtml(f.name) ? '🌐' : '▤'} ${esc(f.name)}</span>
+      <span style="display:flex;gap:6px">
+        ${canPreview ? `<button class="btn small primary" data-preview="${f.id}">Preview</button>` : ''}
+        ${f.storage ? `<button class="btn small ghost" data-dl="${f.id}">Download</button>` : `<button class="btn small ghost" data-open="${f.id}">Open</button>`}
+        <button class="btn small danger" data-rm="${f.id}">✕</button></span></div>`));
+  });
+  return frag;
+}
+
 async function renderFiles(c) {
   const [tree, models] = await Promise.all([api('/files'), api('/models')]);
+  $('#topbar-actions').appendChild(el(`<button class="btn" id="gen-image">🎨 Generate image</button>`));
   $('#topbar-actions').appendChild(el(`<button class="btn" id="upload-file">⬆ Upload</button>`));
   $('#topbar-actions').appendChild(el(`<button class="btn primary" id="add-file">+ New file</button>`));
   $('#add-file').onclick = () => fileForm(models);
   $('#upload-file').onclick = () => uploadForm(models);
+  $('#gen-image').onclick = () => imageGenModal(models);
   c.innerHTML = '';
   const nameFor = (s) => s === 'combined' ? '📦 Combined (shared)' : `🔒 ${models.find((m) => m.id === s)?.label || s}`;
   const scopes = Object.keys(tree);
   if (!scopes.length) { c.appendChild(el('<div class="empty">No files yet. The combined tree is shared by all models.</div>')); return; }
   scopes.sort((a) => (a === 'combined' ? -1 : 1)).forEach((scope) => {
-    const card = el(`<div class="card" style="margin-bottom:14px"><h3>${nameFor(scope)}</h3><div class="list" style="margin-top:12px"></div></div>`);
-    const list = $('.list', card);
-    tree[scope].forEach((f) => list.appendChild(el(`<div class="list-item">
-      <div style="display:flex;gap:12px;align-items:center"><div class="avatar">${f.storage ? '📎' : '▤'}</div><div class="meta"><b>${esc(f.path)}</b><span class="muted small">${new Date(f.updatedAt).toLocaleString()}</span></div></div>
-      <div style="display:flex;gap:8px">${f.storage ? `<button class="btn small ghost" data-dl="${f.id}">Download</button>` : `<button class="btn small ghost" data-open="${f.id}">Open</button>`}<button class="btn small danger" data-rm="${f.id}">✕</button></div></div>`)));
+    const card = el(`<div class="card" style="margin-bottom:14px"><h3>${nameFor(scope)}</h3><div class="tree" style="margin-top:10px"></div></div>`);
+    $('.tree', card).appendChild(renderTreeNode(buildFileTree(tree[scope])));
     c.appendChild(card);
   });
   c.onclick = async (e) => {
-    const open = e.target.dataset.open, dl = e.target.dataset.dl, rm = e.target.dataset.rm;
-    if (open) { const all = await api('/files/all'); fileForm(models, all.find((x) => x.id === open)); }
+    const open = e.target.dataset.open, dl = e.target.dataset.dl, rm = e.target.dataset.rm, prev = e.target.dataset.preview;
+    if (open || prev) { const all = await api('/files/all'); fileForm(models, all.find((x) => x.id === (open || prev)), !!prev); }
     if (dl) { const { url } = await api(`/files/${dl}/url`); window.open(url, '_blank'); }
     if (rm) { await api(`/files/${rm}`, { method: 'DELETE' }); render(); }
   };
 }
 
-function fileForm(models, f = {}) {
+function fileForm(models, f = {}, startPreview = false) {
+  const previewable = isHtml(f.path || '') || isMd(f.path || '');
   const body = el(`<div>
     <label class="field">Scope<select id="f-scope" ${f.id ? 'disabled' : ''}><option value="combined">Combined (shared)</option>${models.map((m) => `<option value="${m.id}" ${f.scope === m.id ? 'selected' : ''}>${esc(m.label)} (private)</option>`).join('')}</select></label>
     <label class="field">Path<input id="f-path" value="${esc(f.path || '')}" placeholder="notes/idea.md"></label>
-    <label class="field">Content<textarea id="f-content" style="min-height:180px">${esc(f.content || '')}</textarea></label>
+    ${previewable ? '<div style="display:flex;gap:8px;margin-bottom:8px"><button class="btn small primary" id="tab-edit">Edit</button><button class="btn small" id="tab-preview">Preview</button></div>' : ''}
+    <div id="edit-pane"><label class="field">Content<textarea id="f-content" style="min-height:200px">${esc(f.content || '')}</textarea></label></div>
+    <div id="preview-pane" hidden></div>
     <div class="modal-foot">${f.id ? '<button class="btn danger" id="del">Delete</button>' : ''}<button class="btn" id="cancel">Cancel</button><button class="btn primary" id="save">Save</button></div></div>`);
   openModal(f.id ? 'Edit file' : 'New file', body);
   $('#cancel', body).onclick = closeModal;
@@ -534,6 +568,124 @@ function fileForm(models, f = {}) {
   $('#save', body).onclick = async () => {
     await api('/files', { method: 'POST', body: JSON.stringify({ id: f.id, scope: $('#f-scope', body).value, path: $('#f-path', body).value, content: $('#f-content', body).value }) });
     closeModal(); render();
+  };
+  if (previewable) {
+    const showPreview = async () => {
+      $('#tab-edit', body).classList.remove('primary'); $('#tab-preview', body).classList.add('primary');
+      $('#edit-pane', body).hidden = true;
+      const pane = $('#preview-pane', body); pane.hidden = false; pane.innerHTML = '<div class="muted small">Rendering…</div>';
+      const content = $('#f-content', body).value;
+      const path = $('#f-path', body).value;
+      let node;
+      if (isMd(path)) node = previewFrame(mdToHtml(content));
+      else {
+        const all = await api('/files/all', {}).catch(() => []);
+        const siblings = all.filter((x) => x.scope === (f.scope || 'combined'));
+        const byPath = {}; siblings.forEach((x) => (byPath[x.path] = x.content));
+        byPath[path] = content; // use unsaved edits
+        const dir = path.split('/').slice(0, -1).join('/');
+        // Resolve relative <img> to signed URLs of stored sibling images.
+        const imgUrls = {};
+        const refs = [...content.matchAll(/<img\b[^>]*\bsrc=["']([^"']+)["']/gi)].map((m) => m[1])
+          .filter((s) => !/^https?:|^data:|^\/\//i.test(s));
+        await Promise.all([...new Set(refs)].map(async (src) => {
+          const p = resolveAsset(dir, src);
+          const file = siblings.find((x) => x.path === p && x.storage_path);
+          if (file) { try { const { url } = await api(`/files/${file.id}/url`); imgUrls[p] = url; } catch {} }
+        }));
+        node = previewFrame(inlineHtml(content, dir, byPath, imgUrls));
+      }
+      pane.innerHTML = ''; pane.appendChild(node);
+    };
+    const showEdit = () => { $('#tab-preview', body).classList.remove('primary'); $('#tab-edit', body).classList.add('primary'); $('#preview-pane', body).hidden = true; $('#edit-pane', body).hidden = false; };
+    $('#tab-preview', body).onclick = showPreview;
+    $('#tab-edit', body).onclick = showEdit;
+    if (startPreview) showPreview();
+  }
+}
+
+function previewFrame(html) {
+  const f = el('<iframe class="preview-frame" sandbox="allow-scripts"></iframe>');
+  f.srcdoc = html;
+  return f;
+}
+// Resolve a relative asset path against the HTML file's folder.
+function resolveAsset(dir, href) {
+  href = href.replace(/^\.\//, '');
+  if (href.startsWith('/')) return href.slice(1);
+  return dir ? `${dir}/${href}` : href;
+}
+// Inline sibling <link rel=stylesheet> and <script src>, and point relative
+// <img src> at Supabase signed URLs (imgUrls), so a multi-file site renders.
+function inlineHtml(html, dir, byPath, imgUrls = {}) {
+  html = html.replace(/<link\b[^>]*>/gi, (tag) => {
+    if (!/stylesheet/i.test(tag)) return tag;
+    const m = tag.match(/href=["']([^"']+)["']/i);
+    if (!m || /^https?:|^\/\//i.test(m[1])) return tag;
+    const css = byPath[resolveAsset(dir, m[1])];
+    return css != null ? `<style>${css}</style>` : tag;
+  });
+  html = html.replace(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*><\/script>/gi, (tag, src) => {
+    if (/^https?:|^\/\//i.test(src)) return tag;
+    const js = byPath[resolveAsset(dir, src)];
+    return js != null ? `<script>${js}<\/script>` : tag;
+  });
+  html = html.replace(/<img\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi, (tag, src) => {
+    if (/^https?:|^data:|^\/\//i.test(src)) return tag;
+    const u = imgUrls[resolveAsset(dir, src)];
+    return u ? tag.replace(src, u) : tag;
+  });
+  return html;
+}
+// Minimal Markdown → HTML for previews (headings, bold/italic, code, lists, links).
+function mdToHtml(src) {
+  const esc2 = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const lines = String(src).split('\n'); let html = ''; let inList = false, inCode = false;
+  for (let line of lines) {
+    if (/^```/.test(line)) { if (inCode) { html += '</pre>'; inCode = false; } else { html += '<pre>'; inCode = true; } continue; }
+    if (inCode) { html += esc2(line) + '\n'; continue; }
+    let l = esc2(line)
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/`(.+?)`/g, '<code>$1</code>')
+      .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2">$1</a>');
+    const h = l.match(/^(#{1,6})\s+(.*)/);
+    const li = l.match(/^\s*[-*]\s+(.*)/);
+    if (li) { if (!inList) { html += '<ul>'; inList = true; } html += `<li>${li[1]}</li>`; continue; }
+    if (inList) { html += '</ul>'; inList = false; }
+    if (h) html += `<h${h[1].length}>${h[2]}</h${h[1].length}>`;
+    else if (l.trim()) html += `<p>${l}</p>`;
+  }
+  if (inList) html += '</ul>';
+  if (inCode) html += '</pre>';
+  return `<!doctype html><meta charset="utf-8"><style>body{font-family:system-ui,sans-serif;line-height:1.6;padding:16px;color:#111}pre{background:#f4f4f5;padding:10px;border-radius:8px;overflow:auto}code{background:#f4f4f5;padding:1px 4px;border-radius:4px}</style>${html}`;
+}
+
+function imageGenModal(models) {
+  const body = el(`<div>
+    <label class="field">Prompt<textarea id="ig-prompt" style="min-height:70px" placeholder="A friendly cartoon pig logo, flat vector, soft colours"></textarea></label>
+    <div style="display:flex;gap:10px">
+      <label class="field" style="flex:1">Save as<input id="ig-path" value="images/generated.png"></label>
+      <label class="field" style="width:120px">Aspect<select id="ig-aspect"><option value="">default</option><option>1:1</option><option>16:9</option><option>4:3</option><option>9:16</option></select></label>
+    </div>
+    <label class="field">Scope<select id="ig-scope"><option value="combined">Combined (shared)</option>${models.map((m) => `<option value="${m.id}">${esc(m.label)} (private)</option>`).join('')}</select></label>
+    <p class="muted small" style="margin-top:-4px">Uses your OpenRouter key (google/gemini-2.5-flash-image). Costs apply per image.</p>
+    <div class="modal-foot"><button class="btn" id="cancel">Cancel</button><button class="btn primary" id="go">Generate</button></div>
+    <p class="small" id="ig-msg" style="min-height:14px"></p><div id="ig-preview"></div></div>`);
+  openModal('Generate image', body);
+  $('#cancel', body).onclick = closeModal;
+  $('#go', body).onclick = async () => {
+    const prompt = $('#ig-prompt', body).value.trim(); if (!prompt) return;
+    const msg = $('#ig-msg', body); msg.style.color = 'var(--muted)'; msg.innerHTML = '<span class="spinner"></span> Generating… (can take 10–20s)';
+    $('#go', body).disabled = true;
+    try {
+      const f = await api('/images/generate', { method: 'POST', body: JSON.stringify({ prompt, path: $('#ig-path', body).value, scope: $('#ig-scope', body).value, aspect: $('#ig-aspect', body).value }) });
+      const { url } = await api(`/files/${f.id}/url`);
+      msg.style.color = 'var(--ok)'; msg.textContent = `Saved "${f.path}".`;
+      $('#ig-preview', body).innerHTML = `<img src="${url}" style="max-width:100%;border-radius:10px;margin-top:10px">`;
+      go('files'); // refresh file tree behind the modal (clears toolbar cleanly)
+    } catch (e) { msg.style.color = 'var(--danger)'; msg.textContent = e.message; }
+    $('#go', body).disabled = false;
   };
 }
 
