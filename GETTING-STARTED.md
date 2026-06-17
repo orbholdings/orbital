@@ -115,36 +115,73 @@ Supabase is your database + login system. You'll run it on your own server.
 
 ---
 
-# Part 3 — Get your 3 Supabase keys
+# Part 3 — Get your two Supabase keys
 
-Orbital needs exactly three values. In Coolify, open your **Supabase service →
-Environment Variables** (and/or open **Supabase Studio → Project Settings → API**).
+On your Supabase **service** page in Coolify, open the **Environment Variables** tab
+and use the search box. Copy the **values** of these two variables:
 
-Find these:
+| You need | Search for this variable | Looks like |
+|----------|--------------------------|------------|
+| `SUPABASE_ANON_KEY` | **`SERVICE_SUPABASEANON_KEY`** | a long `eyJ...` token |
+| `SUPABASE_SERVICE_ROLE_KEY` | **`SERVICE_SUPABASESERVICE_KEY`** | a long `eyJ...` token |
 
-| You need | Where it is | Looks like |
-|----------|-------------|------------|
-| `SUPABASE_URL` | The **API** domain you set (the Kong/API gateway URL) | `https://supabase-api.yourdomain.com` |
-| `SUPABASE_ANON_KEY` | Env var **`ANON_KEY`** (or "anon public" in Studio) | a long `eyJ...` token |
-| `SUPABASE_SERVICE_ROLE_KEY` | Env var **`SERVICE_ROLE_KEY`** (or "service_role" in Studio) | a long `eyJ...` token |
+> **Gotcha:** the variables literally *named* `SUPABASE_ANON_KEY` /
+> `SUPABASE_SERVICE_ROLE_KEY` may just show a placeholder like
+> `${SERVICE_SUPABASEANON_KEY}` — that's a reference, not the real value. Always copy
+> from the **`SERVICE_SUPABASE…`** variables above, which hold the actual tokens.
+> (Both keys start with the same `eyJ...` header — that's normal; they really are different.)
 
-Copy all three into a temporary notepad — you'll paste them in Part 6.
+The **third value, your `SUPABASE_URL`, is set up in Part 3.5** so it's secure (https).
 
-> The **service role key is a master key — keep it secret.** Orbital only uses it
-> on the server; it never reaches the browser.
+> The **service role key is a master key — keep it secret.** Orbital only uses it on
+> the server; it never reaches the browser.
+
+---
+
+# Part 3.5 — Give Supabase a secure (https) address
+
+Coolify's default Supabase URL (`SERVICE_URL_SUPABASEKONG`) is an **http**
+`sslip.io` address. That won't work from a browser, because a secure (https) Orbital
+page is not allowed to call an insecure (http) one. So point a domain at it with SSL.
+
+**You need a domain name** (e.g. `yourname.com`). No domain? See the "no-domain
+fallback" note at the bottom of this part.
+
+1. **Add a DNS record** at your domain provider (Cloudflare, GoDaddy, etc.):
+   - Type **A**, Name **`supabase`** (→ `supabase.yourname.com`), value = **your VPS IP**.
+   - On **Cloudflare**, set the record's proxy to **DNS only (grey cloud)** — Coolify
+     needs this to issue its SSL certificate. (Do the same for your `orbital` record.)
+2. In Coolify, open the Supabase service → find the **Kong / API** sub-service → its
+   **Domains** field → enter `https://supabase.yourname.com` → **Save**.
+3. **Redeploy** the Supabase service. Coolify auto-issues a free Let's Encrypt SSL cert.
+4. Your **`SUPABASE_URL`** is now `https://supabase.yourname.com`. Test it: open that
+   URL in a browser — you should get a small JSON message, served over https. ✅
+
+> **No-domain fallback (testing only):** skip the domain and use the default
+> `http://...sslip.io` URL as your `SUPABASE_URL` — **but** then you must also run the
+> Orbital app over plain http (Part 6), so the browser doesn't block the mix. It works
+> for a quick try, but it's unencrypted. Add a domain before real use.
 
 ---
 
 # Part 4 — Create the database tables
 
-1. Open **Supabase Studio** (the dashboard URL from Coolify). If it asks for a
-   username/password, that's set in the Supabase service's env vars in Coolify
-   (look for `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD`).
-2. In the left sidebar click **SQL Editor** → **New query**.
-3. On your PC, open **`supabase/schema.sql`** from the Orbital folder (any text
+First, open the **Supabase Studio** dashboard:
+
+1. In Coolify, on the Supabase service's **Environment Variables** tab, copy the
+   dashboard **username** and **password** — `SERVICE_USER_SUPABASE` and
+   `SERVICE_PASSWORD_SUPABASE`.
+2. Go to the service's **General** tab and **scroll down to the Services list**, click
+   **Supabase Studio → Settings → Links**, and **click the link** to open Studio.
+   Log in with the username/password from step 1 if asked.
+
+Then create the tables:
+
+1. In Studio's left sidebar click **SQL Editor** → **New query**.
+2. On your PC, open **`supabase/schema.sql`** from the Orbital folder (any text
    editor — Notepad works). Select all (Ctrl+A), copy (Ctrl+C).
-4. Paste it into the SQL editor and click **Run** (or press Ctrl+Enter).
-5. You should see "Success". This created all the tables, security rules, and the
+3. Paste it into the SQL editor and click **Run** (or press Ctrl+Enter).
+4. You should see "Success". This created all the tables, security rules, and the
    file-storage bucket. ✅ *(It's safe to re-run later when you update Orbital.)*
 
 ---
